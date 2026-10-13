@@ -1,0 +1,22 @@
+target_frames: 16
+canvas_size: 256
+roi_size: 64
+flow_estimator: farneback  # Optional: raft_small; use a separate cache directory.
+flow_representation: roi_pixel_displacement
+flow_scale: 20.0  # Fixed initial scale, tune on train/val only, never per-video.
+flow_clip: 5.0
+cache_dtype: float16
+hand_margin: 1.5
+mouth_margin: 1.8
+model_complexity: 1
+detection_confidence: 0.5
+tracking_confidence: 0.5
+num_flow_updates: 12
+farneback:
+  pyr_scale: 0.5
+  levels: 3
+  winsize: 15
+  iterations: 3
+  poly_n: 5
+  poly_sigma: 1.2
+  flags: 0

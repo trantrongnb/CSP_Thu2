@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mfpa-fslr"
+version = "0.1.0"
+description = "Motion-first part-adaptive few-shot sign language recognition baseline"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24,<2", "torch>=2.3", "PyYAML>=6", "opencv-python-headless>=4.8,<4.12"]
+
+[project.optional-dependencies]
+landmarks = ["mediapipe==0.10.21"]
+raft = ["torchvision>=0.18"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+mfpa-preprocess = "mfpa.preprocessing.pipeline:main"
+mfpa-train = "mfpa.engine:train_main"
+mfpa-evaluate = "mfpa.engine:evaluate_main"
+mfpa-episodes = "mfpa.datasets.episode_sampler:main"
+mfpa-visualize = "mfpa.preprocessing.visualize:main"
+mfpa-smoke = "mfpa.smoke:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
