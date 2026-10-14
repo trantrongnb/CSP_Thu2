@@ -7,24 +7,42 @@ thực nghiệm trên dữ liệu ký hiệu và không phải tái hiện AIS/L
 
 ## 1. Cài đặt và kiểm tra nhanh
 
-Chạy từ thư mục `CSP/mfpa_fslr`. Python 3.10–3.12 được khuyến nghị cho backend
-MediaPipe đã pin. Trong workspace này đã tạo `CSP/.venv` và cài bản PyTorch CPU.
+Chạy từ thư mục `CSP/mfpa_fslr`. Workspace dùng conda `signclip_5090` có
+PyTorch CUDA 12.8, NumPy 1.26 và PyYAML. Python 3.10–3.12 được khuyến nghị cho
+backend MediaPipe đã pin. Môi trường virtualenv CPU cũ đã được gỡ.
 
 ```bash
-source ../.venv/bin/activate
-# Nếu thiết lập môi trường mới:
-# python3 -m venv ../.venv
-# source ../.venv/bin/activate
-# pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-pip install -e '.[dev,landmarks,raft]'
-pytest -q
+bash scripts/run_conda.sh check
+# Môi trường thay thế:
+bash scripts/run_conda.sh --env manta check
+```
+
+Launcher gọi thẳng Python trong conda, thêm `src` vào PYTHONPATH và đặt
+`CUDA_MPS_PIPE_DIRECTORY=/tmp/nvidia-mps` nếu chưa được cấu hình. Không cần cài
+package vào môi trường conda dùng chung. `sign5090` là alias của `signclip_5090`
+trong launcher. `check` chỉ kiểm tra môi trường/GPU, không chạy training.
+`check` có timeout 30 giây (exit code 124 nếu quá thời gian); có thể đặt
+`MFPA_CUDA_CHECK_TIMEOUT=90` khi ổ đĩa/driver đang chậm. Lệnh `train` và
+`evaluate` trên CUDA cũng chạy bước kiểm tra này trước khi bắt đầu; nếu MPS
+không phản hồi, lệnh sẽ báo lỗi và thoát. Ctrl+C dừng cả tiến trình Python
+đang chờ CUDA. Import các thư viện CUDA thành công chưa bảo đảm khởi tạo CUDA
+context qua MPS đã thành công.
+Manta hiện có NumPy 2.2, ngoài ràng buộc NumPy<2 của package; ưu tiên signclip_5090.
+Các ví dụ `mfpa-*` ở các phần còn lại áp dụng khi package đã được cài vào môi
+trường của bạn; trên server này dùng launcher cho train/evaluate/episodes.
+
+Để cài package vào một môi trường conda riêng đã có PyTorch CUDA phù hợp:
+
+```bash
+python -m pip install -e '.[dev,landmarks,raft]'
+python -m pytest -q
 mfpa-smoke --output outputs/smoke_new --steps 40
 ```
 
-Nếu dùng GPU, cài cặp torch/torchvision phù hợp CUDA trên máy trước khi cài package;
-không dùng index CPU ở lệnh trên. `--device auto` tự chọn CUDA nếu có.
 Backend landmarks dùng `mediapipe==0.10.21` và `solutions.holistic`; phiên bản được
 pin vì API legacy có thể khác giữa các bản phát hành. RAFT là dependency tùy chọn.
+Signclip_5090 hiện có MediaPipe 0.10.32; training dùng cache đã có, còn việc
+preprocessing lại cần môi trường có MediaPipe 0.10.21 theo cấu hình backend.
 
 Smoke test sinh **feature tổng hợp**, overfit một episode 3-way 1-shot, rồi chạy
 train/validation/checkpoint/evaluation thật qua cùng code path. Dữ liệu smoke có
@@ -60,6 +78,54 @@ python scripts/build_metadata.py --metadata data/metadata.csv --splits-dir data/
 khi detect để giữ LH/RH theo giải phẫu. Không có cột này thì mặc định false.
 Phải kiểm tra convention bằng overlay trên video thực; không tự flip augmentation.
 Protocol cross-signer có ràng buộc signer riêng chưa được thêm vào sampler v1.
+
+### WLASL trong workspace này
+
+Cache đầy đủ ở `data/processed_wlasl_farneback`; metadata dùng để preprocessing là
+`data/wlasl_preprocess.csv`. Metadata training riêng ở `data/wlasl_60_20_20/metadata.csv`.
+Đây là **protocol tự xây dựng**, không phải split công bố hay kết quả tái hiện WLASL.
+
+Pool chung cho 5-way 1/5-shot với Q=5 có 912 lớp và 11.706 video:
+Các lớp được chia theo tỉ lệ 60/20/20: train 547 lớp, validation 182 lớp,
+test 183 lớp (làm tròn về số nguyên; lớp còn lại đưa vào test).
+Đã loại hai mẫu không dùng được chung cho A0–A5, giữ một bản cho mỗi source SHA256
+trên toàn pool và chỉ giữ lớp còn ít nhất 10 video hợp lệ, khác nội dung.
+Bản canonical ưu tiên lớp có ít video hơn, rồi video ID. Các lớp liên kết bởi
+video trùng trong dữ liệu gốc được giữ cùng split. Seed 42; tỉ lệ lớp xấp xỉ
+60/20/20. Việc lọc và chia lớp không dùng embedding hoặc accuracy của model.
+
+`data/wlasl_60_20_20/protocol.json` lưu hashes, chính sách và thống kê; `excluded_videos.csv`
+ghi video bị loại cùng lý do. Signer ID chưa biết nên không coi đây là benchmark
+cross-signer. Các video/cache gốc vẫn có thể dùng để xây protocol khác.
+
+Chạy training từ thư mục `mfpa_fslr`:
+
+```bash
+bash scripts/run_conda.sh train --config configs/train_wlasl_5w1s.yaml
+bash scripts/run_conda.sh train --config configs/train_wlasl_5w5s.yaml
+```
+
+Để chạy audit sau preprocessing, dùng report path mới. Lệnh đọc lại toàn bộ cache
+và kiểm tra source hashes, có thể mất vài phút tùy ổ đĩa:
+
+```bash
+python scripts/audit_wlasl.py --metadata data/wlasl_preprocess.csv \
+  --cache-dir data/processed_wlasl_farneback \
+  --output outputs/wlasl_training_readiness/report_reaudit.json --workers 4
+```
+
+Để tái tạo metadata từ báo cáo audit đã kiểm tra đầy đủ cache, dùng output mới:
+
+```bash
+python scripts/prepare_wlasl_training.py \
+  --metadata data/wlasl_preprocess.csv \
+  --audit outputs/wlasl_training_readiness/report.json \
+  --cache-dir data/processed_wlasl_farneback \
+  --output-dir data/wlasl_rebuilt --min-videos 10 --seed 42
+```
+
+Metadata/config hash phải khớp audit. `--min-videos 6` tạo pool chỉ đủ 1-shot/Q=5;
+không dùng pool đó trực tiếp với config 5-shot. Script không ghi đè protocol cũ.
 
 ## 3. Preprocessing và kiểm tra ROI
 
