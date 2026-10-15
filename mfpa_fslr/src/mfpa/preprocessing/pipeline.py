@@ -1,6 +1,9 @@
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import json
+import sys
+import threading
 import time
 from pathlib import Path
 
@@ -15,6 +18,20 @@ from .video_frames import read_video
 from ..datasets.feature_dataset import read_metadata
 
 
+def progress(index, total, label, started):
+    width = 28
+    filled = int(width * index / max(total, 1))
+    elapsed = time.perf_counter() - started
+    rate = index / elapsed if elapsed > 0 else 0.0
+    eta = (total - index) / rate if rate > 0 else 0.0
+    bar = "=" * filled + ">" + " " * max(0, width - filled - 1)
+    sys.stdout.write(f"\r[{bar}] {index:>5}/{total:<5} {100 * index / max(total, 1):5.1f}% "
+                     f"{label[:28]:<28} ETA {eta / 60:5.1f}m")
+    sys.stdout.flush()
+    if index >= total:
+        sys.stdout.write("\n")
+
+
 DEFAULTS = {"target_frames": 16, "canvas_size": 256, "roi_size": 64,
             "flow_estimator": "farneback", "flow_representation": "roi_pixel_displacement",
             "flow_scale": 20.0, "flow_clip": 5.0, "cache_dtype": "float16",
@@ -23,15 +40,47 @@ DEFAULTS = {"target_frames": 16, "canvas_size": 256, "roi_size": 64,
             "farneback": {}, "num_flow_updates": 12}
 
 
-def preprocessing_signature(config):
+def preprocessing_signature(config, landmark_model=None):
     from importlib.metadata import version
+    import os
+    import mediapipe as mp
+
+    model_path = landmark_model or os.environ.get("MFPA_HOLISTIC_MODEL")
+    legacy_holistic = getattr(getattr(mp, "solutions", None), "holistic", None)
+    if not hasattr(legacy_holistic, "Holistic"):
+        if model_path is None:
+            model_path = Path(__file__).resolve().parents[3] / "data/models/holistic_landmarker.task"
+        model_path = Path(model_path).expanduser().resolve()
+        if not model_path.is_file():
+            # The model is downloaded by extraction. Keep the stable source URL
+            # in the signature before it exists locally.
+            from .landmarks import HOLISTIC_MODEL_URL
+            model_identity = HOLISTIC_MODEL_URL
+        else:
+            model_identity = hashlib.sha256(model_path.read_bytes()).hexdigest()
+    else:
+        model_identity = "legacy-solutions-holistic"
     payload = {"schema_version": 1, "config": config, "mouth_indices": MOUTH_INDICES,
                "opencv_version": cv2.__version__, "numpy_version": np.__version__,
-               "mediapipe_version": version("mediapipe")}
+               "mediapipe_version": version("mediapipe"), "landmark_model": model_identity}
     if config["flow_estimator"] == "raft_small":
         payload.update(torch_version=version("torch"), torchvision_version=version("torchvision"),
                        raft_weights="Raft_Small_Weights.C_T_V2")
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest(), payload
+
+
+def progress(index, total, label, started):
+    width = 28
+    filled = int(width * index / max(total, 1))
+    elapsed = time.perf_counter() - started
+    rate = index / elapsed if elapsed > 0 else 0.0
+    eta = (total - index) / rate if rate > 0 else 0.0
+    bar = "=" * filled + ">" + " " * max(0, width - filled - 1)
+    sys.stdout.write(f"\r[{bar}] {index:>5}/{total:<5} {100 * index / max(total, 1):5.1f}% "
+                     f"{label[:26]:<26} ETA {eta / 60:5.1f}m")
+    sys.stdout.flush()
+    if index >= total:
+        sys.stdout.write("\n")
 
 
 def pack_features(video, landmarks, estimator, config):
@@ -78,7 +127,13 @@ def main(argv=None):
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--landmark-model", type=Path,
+                        help="Holistic .task model used when the installed MediaPipe lacks solutions.holistic")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="Number of videos to preprocess concurrently")
     args = parser.parse_args(argv)
+    if args.workers < 1:
+        parser.error("--workers must be positive")
     config = {**DEFAULTS, **(yaml.safe_load(args.config.read_text()) or {})}
     if config["target_frames"] < 2 or config["flow_scale"] <= 0 or config["flow_clip"] <= 0:
         raise ValueError("Invalid sampling or flow normalization config")
@@ -88,7 +143,7 @@ def main(argv=None):
         raise ValueError("flow_estimator must be farneback or raft_small")
     if config["flow_clip"] > np.finfo(config["cache_dtype"]).max:
         raise ValueError("flow_clip exceeds cache dtype range")
-    signature, provenance = preprocessing_signature(config)
+    signature, provenance = preprocessing_signature(config, args.landmark_model)
     args.output.mkdir(parents=True, exist_ok=True)
     manifest = args.output / "preprocessing_manifest.json"
     if manifest.exists() and json.loads(manifest.read_text())["config_hash"] != signature:
@@ -98,10 +153,13 @@ def main(argv=None):
     if config["flow_estimator"] == "raft_small":
         import torch
         torch.hub.set_dir(str(args.output / ".torch_hub"))
-    estimator = (FarnebackFlow(**config["farneback"]) if config["flow_estimator"] == "farneback"
-                 else RaftSmallFlow(args.device, config["num_flow_updates"]))
     rows = read_metadata(args.metadata)
-    for index, row in enumerate(rows[:args.limit] if args.limit is not None else rows):
+    rows = rows[:args.limit] if args.limit is not None else rows
+    progress_start = time.perf_counter()
+    progress_lock = threading.Lock()
+
+    def process_row(item):
+        index, row = item
         path = Path(row["path"])
         if not path.is_absolute():
             path = args.metadata.parent / path
@@ -116,12 +174,16 @@ def main(argv=None):
                     str(cached["source_hash"].item()) != source_hash or
                     bool(cached["is_mirrored"].item()) != (mirror_value in {"1", "true"})):
                     raise ValueError(f"Stale cache: {cache_path}; use a new output directory")
-            print(f"[{index + 1}] cached {row['video_id']}", flush=True)
-            continue
+            with progress_lock:
+                progress(index, len(rows), f"cached {row['video_id']}", progress_start)
+            return
         start = time.perf_counter()
+        estimator = (FarnebackFlow(**config["farneback"]) if config["flow_estimator"] == "farneback"
+                     else RaftSmallFlow(args.device, config["num_flow_updates"]))
         video = read_video(path, config["target_frames"], config["canvas_size"], mirror_value in {"1", "true"})
         landmarks = extract_landmarks(video["rgb"], config["model_complexity"],
-                                      config["detection_confidence"], config["tracking_confidence"])
+                                      config["detection_confidence"], config["tracking_confidence"],
+                                      args.landmark_model)
         features = pack_features(video, landmarks, estimator, config)
         features.update(config_hash=np.array(signature), source_hash=np.array(source_hash),
                         preprocessing_seconds=np.array(time.perf_counter() - start))
@@ -130,8 +192,14 @@ def main(argv=None):
         with temporary.open("wb") as handle:
             np.savez_compressed(handle, **features)
         temporary.replace(cache_path)
-        print(f"[{index + 1}] {row['video_id']}: {features['flow_quality'].mean():.3f} mean flow quality, "
-              f"{features['preprocessing_seconds']:.2f}s", flush=True)
+        with progress_lock:
+            progress(index, len(rows),
+                     f"{row['video_id']} q={features['flow_quality'].mean():.2f}", progress_start)
+
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+        futures = [pool.submit(process_row, item) for item in enumerate(rows, 1)]
+        for future in as_completed(futures):
+            future.result()
 
 
 if __name__ == "__main__":

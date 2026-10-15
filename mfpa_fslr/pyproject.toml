@@ -10,7 +10,7 @@ requires-python = ">=3.10"
 dependencies = ["numpy>=1.24,<2", "torch>=2.3", "PyYAML>=6", "opencv-python-headless>=4.8,<4.12"]
 
 [project.optional-dependencies]
-landmarks = ["mediapipe==0.10.21"]
+landmarks = ["mediapipe>=0.10.30"]
 raft = ["torchvision>=0.18"]
 dev = ["pytest>=8"]
 

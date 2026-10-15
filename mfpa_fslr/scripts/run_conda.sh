@@ -35,8 +35,8 @@ case "$action" in
 esac
 
 package_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-conda_root="${MFPA_CONDA_ROOT:-/home/iec/disk2/TrongTV/miniconda3}"
-python_path="$conda_root/envs/$env_name/bin/python"
+conda_root="${MFPA_CONDA_ROOT:-/home/iec/disk2/cuongpd/miniconda3}"
+python_path="$conda_root/envs/dung36838/bin/python"
 if [[ ! -x "$python_path" ]]; then
   echo "Conda interpreter not found: $python_path" >&2
   exit 1
@@ -106,6 +106,33 @@ if [[ "$action" == "train" || "$action" == "evaluate" ]]; then
       echo "CUDA is not responding; $action was not started." >&2
       exit 1
     fi
+  fi
+fi
+
+if [[ "$action" == "train" && "${show_help:-false}" == false ]]; then
+  config_path=""
+  for ((i=0; i<${#args[@]}; i++)); do
+    case "${args[i]}" in
+      --config)
+        config_path="${args[i+1]:-}"
+        break
+        ;;
+      --config=*)
+        config_path="${args[i]#--config=}"
+        break
+        ;;
+    esac
+  done
+  if [[ "$(basename -- "$config_path")" == train_wlasl_*.yaml ]]; then
+    run_supervised "$python_path" "$package_dir/scripts/prepare_dataset.py" --config "$config_path"
+    prepared_config="$package_dir/outputs/.prepared_$(basename -- "${config_path%.*}").yaml"
+    for ((i=0; i<${#args[@]}; i++)); do
+      case "${args[i]}" in
+        --config) args[i+1]="$prepared_config"; break ;;
+        --config=*) args[i]="--config=$prepared_config"; break ;;
+      esac
+    done
+    set -- "${args[@]}"
   fi
 fi
 run_supervised "$python_path" "$package_dir/scripts/conda_entry.py" "$action" "$@"

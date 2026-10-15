@@ -30,5 +30,5 @@ training:
   log_every: 100
 evaluation:
   val_episodes_file: data/wlasl_60_20_20/episodes/val_5w5s_seed123.json
-  val_episodes: 100
-  seed: 123
+  val_episodes: 1000
+  seed: 42

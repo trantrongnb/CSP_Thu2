@@ -177,7 +177,20 @@ def train_main(argv=None):
                 raise FloatingPointError(f"Nonfinite training loss at epoch {epoch}, episode {index}")
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), settings["grad_clip"], error_if_nonfinite=True)
+            gradients_finite = all(
+                parameter.grad is None or torch.isfinite(parameter.grad).all()
+                for parameter in model.parameters()
+            )
+            if not gradients_finite:
+                # AMP can overflow gradients while the forward loss remains finite.
+                # Skip this update; GradScaler will reduce its scale on update().
+                optimizer.zero_grad(set_to_none=True)
+                scaler.update()
+                if (index + 1) % settings.get("log_every", 100) == 0 or index == 0:
+                    print(f"epoch {epoch + 1}, episode {index + 1}: non-finite gradients; "
+                          "skipped optimizer step", flush=True)
+                continue
+            torch.nn.utils.clip_grad_norm_(model.parameters(), settings["grad_clip"], error_if_nonfinite=False)
             scaler.step(optimizer)
             scaler.update()
             loss_sum += loss.item()
