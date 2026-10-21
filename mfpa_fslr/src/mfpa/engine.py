@@ -15,12 +15,19 @@ from .datasets.feature_dataset import FeatureDataset
 from .datasets.episode_sampler import EpisodeSampler, load_episodes
 from .datasets.collate import encode_episode
 from .models import MFPAFSLR, part_proto_logits
+from .models.prototype_head import RelationNetwork
 from .utils.seed import seed_everything
 from .utils.metrics import episodic_accuracy_summary
 
 
 def build_model(config):
-    return MFPAFSLR(**config["model"])
+    model = MFPAFSLR(**config["model"])
+    matcher = config.get("head", {}).get("matcher", "euclidean")
+    if matcher not in {"euclidean", "relation"}:
+        raise ValueError("head.matcher must be 'euclidean' or 'relation'")
+    if matcher == "relation":
+        model.relation_network = RelationNetwork(config["model"].get("dimension", 128))
+    return model
 
 
 def score_episode(model, dataset, episode, device, head):
@@ -30,8 +37,12 @@ def score_episode(model, dataset, episode, device, head):
     options["lam"] = lambda_part if model.variant in {"A4", "A5"} else 0.0
     options["tau_a"] = options.pop("tau_alpha", 1.0)
     options["adaptive"] = model.variant == "A5"
+    matcher = options.pop("matcher", "euclidean")
     logits, alpha = part_proto_logits(support["global"], support["parts"], support["part_quality"],
-                                      query["global"], query["parts"], query["part_quality"], **options)
+                                      query["global"], query["parts"], query["part_quality"],
+                                      matcher=matcher,
+                                      relation_network=getattr(model, "relation_network", None),
+                                      **options)
     loss = F.cross_entropy(logits, labels)
     return logits, labels, loss, alpha
 

@@ -9,7 +9,6 @@ import argparse
 import csv
 import hashlib
 import json
-import random
 import re
 import subprocess
 import sys
@@ -29,7 +28,7 @@ VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
 
 
 def build_metadata_rows(dataset_root: Path, seed: int = 42) -> list[dict[str, str]]:
-    """Create deterministic class-disjoint metadata from gloss/video folders."""
+    """Create alphabetically split, class-disjoint metadata from gloss folders."""
     dataset_root = dataset_root.resolve()
     gloss_dirs = []
     for gloss_dir in sorted(dataset_root.iterdir(), key=lambda path: path.name):
@@ -45,11 +44,9 @@ def build_metadata_rows(dataset_root: Path, seed: int = 42) -> list[dict[str, st
 
     classes = sorted(gloss for gloss, _ in gloss_dirs)
     class_ids = {gloss: str(index) for index, gloss in enumerate(classes)}
-    shuffled = list(classes)
-    random.Random(seed).shuffle(shuffled)
-    train_end, val_end = int(len(shuffled) * 0.6), int(len(shuffled) * 0.8)
+    train_end, val_end = int(len(classes) * 0.6), int(len(classes) * 0.8)
     split_by_gloss = {gloss: ("train" if index < train_end else "val" if index < val_end else "test")
-                      for index, gloss in enumerate(shuffled)}
+                      for index, gloss in enumerate(classes)}
 
     rows = []
     for gloss, videos in gloss_dirs:
@@ -147,9 +144,9 @@ def main(argv=None) -> None:
              "--metadata", str(prep_metadata), "--cache-dir", str(cache_dir),
              "--output", str(audit_path), "--workers", str(args.workers)])
 
-    # Key the protocol by metadata and audit hashes so changed inputs produce
-    # a new immutable output directory instead of overwriting a prior protocol.
-    protocol_key = f"{metadata_hash}_{sha256(audit_path)[:16]}"
+    # Include the split-policy version so a changed assignment rule produces a
+    # new immutable protocol instead of reusing the prior randomized split.
+    protocol_key = f"{metadata_hash}_{sha256(audit_path)[:16]}_alphabetical_v1"
     protocol_dir = prepared_dir / protocol_key
     stage(4, "Build the content-deduplicated train/validation/test protocol")
     if not protocol_dir.exists():

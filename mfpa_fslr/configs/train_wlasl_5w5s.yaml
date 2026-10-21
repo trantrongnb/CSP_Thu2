@@ -1,6 +1,6 @@
 # Same metadata/classes as train_wlasl_5w1s.yaml; only K changes.
 seed: 42
-output_dir: outputs/WLASL_60_20_20_A5_5w5s_seed42
+output_dir: outputs/WLASL_60_20_20_A5_5w5s_alpha_seed42
 data:
   metadata: data/wlasl_60_20_20/metadata.csv
   cache_dir: data/processed_wlasl_farneback
@@ -10,6 +10,7 @@ model:
   normalization: group
   regions: [0, 1, 2]
 head:
+  matcher: euclidean  # Alternatives: relation (trainable query/prototype scorer)
   lambda_part: 1.0
   beta_d: 1.0
   beta_q: 0.5

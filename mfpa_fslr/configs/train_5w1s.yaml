@@ -9,6 +9,7 @@ model:
   normalization: group  # batch is also supported
   regions: [0, 1, 2]  # anatomical LH, RH, mouth
 head:
+  matcher: euclidean  # Alternatives: relation (trainable query/prototype scorer)
   lambda_part: 1.0
   beta_d: 1.0
   beta_q: 0.5

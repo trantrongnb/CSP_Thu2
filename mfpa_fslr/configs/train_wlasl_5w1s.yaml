@@ -1,6 +1,6 @@
 # Local content-deduplicated protocol, shared class pool for 1-shot and 5-shot.
 seed: 42
-output_dir: outputs/WLASL_60_20_20_A5_5w1s_seed42
+output_dir: outputs/WLASL_60_20_20_A5_5w1s_alpha_seed42
 data:
   metadata: data/wlasl_60_20_20/metadata.csv
   cache_dir: data/processed_wlasl_farneback
@@ -10,6 +10,7 @@ model:
   normalization: group
   regions: [0, 1, 2]
 head:
+  matcher: relation  # Alternatives: relation (trainable query/prototype scorer)
   lambda_part: 1.0
   beta_d: 1.0
   beta_q: 0.5
@@ -23,7 +24,7 @@ training:
   queries_per_class: 5
   episodes_per_epoch: 1000
   max_epochs: 100
-  lr: 0.0001
+  lr: 0.001
   weight_decay: 0.0001
   grad_clip: 1.0
   amp: true

@@ -87,13 +87,16 @@ Cache đầy đủ ở `data/processed_wlasl_farneback`; metadata dùng để pr
 Đây là **protocol tự xây dựng**, không phải split công bố hay kết quả tái hiện WLASL.
 
 Pool chung cho 5-way 1/5-shot với Q=5 có 912 lớp và 11.706 video:
-Các lớp được chia theo tỉ lệ 60/20/20: train 547 lớp, validation 182 lớp,
-test 183 lớp (làm tròn về số nguyên; lớp còn lại đưa vào test).
+Các lớp được sắp theo gloss alphabetically (không phân biệt hoa/thường), sau đó
+chia theo thứ tự vào train/validation/test với mục tiêu 60/20/20. Classes được nối
+bởi duplicate source phải ở cùng split; vì vậy ranh giới có thể lệch nhẹ để không
+tách các nhóm này. Metadata gốc cũng gán split theo cùng thứ tự alphabet.
 Đã loại hai mẫu không dùng được chung cho A0–A5, giữ một bản cho mỗi source SHA256
 trên toàn pool và chỉ giữ lớp còn ít nhất 10 video hợp lệ, khác nội dung.
 Bản canonical ưu tiên lớp có ít video hơn, rồi video ID. Các lớp liên kết bởi
-video trùng trong dữ liệu gốc được giữ cùng split. Seed 42; tỉ lệ lớp xấp xỉ
-60/20/20. Việc lọc và chia lớp không dùng embedding hoặc accuracy của model.
+video trùng trong dữ liệu gốc được giữ cùng split. Split không dùng random seed;
+episode sampling vẫn có seed riêng. Việc lọc và chia lớp không dùng embedding hoặc
+accuracy của model.
 
 `data/wlasl_60_20_20/protocol.json` lưu hashes, chính sách và thống kê; `excluded_videos.csv`
 ghi video bị loại cùng lý do. Signer ID chưa biết nên không coi đây là benchmark
@@ -229,6 +232,17 @@ latency streaming end-to-end; chưa có FLOPs/hard-class/occlusion benchmark.
 Meta-test cross-lingual dùng checkpoint ASL với `--metadata`, `--cache-dir`,
 `--split test` và episode file của ngôn ngữ đích. Cấu hình preprocessing phải khớp
 checkpoint. Code không tải MS-ASL/SIGNUM/AUTSL hay tự đặt subset của paper.
+
+### Chọn metric matching
+
+`head.matcher` chọn cách chấm điểm query–prototype: `euclidean` (mặc định, squared
+Euclidean trên embedding chuẩn hóa) hoặc `relation`. Relation mode dùng một scorer
+pairwise học được trên `[query, prototype, query-prototype, query*prototype]` cho
+global và từng part; scorer được tối ưu cùng encoder bằng episodic cross-entropy.
+Chọn `head.matcher: relation` trong YAML và dùng `output_dir` mới để train. Không
+đổi matcher khi evaluate/resume checkpoint: config matcher phải khớp run đã train.
+Để so sánh công bằng, giữ nguyên seed, episode files, encoder config và lịch train;
+Relation Network có thêm tham số và cần được train từ đầu.
 
 ## 5. Ablation A0–A5
 

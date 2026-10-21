@@ -3,7 +3,6 @@ import argparse
 import csv
 import hashlib
 import json
-import random
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -48,8 +47,16 @@ def select_rows(rows, audit, min_videos):
                   key=lambda row: (row["class_key"], row["video_id"])), rejected
 
 
-def split_classes(rows, duplicate_groups, seed=42):
-    classes = sorted({row["class_key"] for row in rows})
+def split_classes(rows, duplicate_groups, seed=None):
+    """Assign alphabetically ordered classes to 60/20/20 splits.
+
+    Classes connected by duplicate source content stay in one split. Split
+    boundaries follow the sorted groups, so ratios can shift by the size of a
+    linked group. ``seed`` is accepted for call compatibility but unused.
+    """
+    gloss_by_class = {row["class_key"]: row["gloss"].strip() for row in rows}
+    classes = sorted(gloss_by_class, key=lambda key: (gloss_by_class[key].casefold(), key))
+    class_rank = {key: index for index, key in enumerate(classes)}
     parents = {key: key for key in classes}
 
     def find(key):
@@ -65,30 +72,31 @@ def split_classes(rows, duplicate_groups, seed=42):
     components = defaultdict(list)
     for key in classes:
         components[find(key)].append(key)
-    groups = sorted(components.values())
-    random.Random(seed).shuffle(groups)
-
-    def take_exact(pool, target):
-        reachable = {0: ()}
-        for index, group in enumerate(pool):
-            for total in sorted(reachable, reverse=True):
-                new_total = total + len(group)
-                if new_total <= target and new_total not in reachable:
-                    reachable[new_total] = (*reachable[total], index)
-            if target in reachable:
-                selected = set(reachable[target])
-                return ([key for i, group in enumerate(pool) if i in selected for key in group],
-                        [group for i, group in enumerate(pool) if i not in selected])
-        raise ValueError("Cannot obtain the target class counts while preserving duplicate-linked groups")
+    groups = [sorted(group, key=class_rank.__getitem__) for group in components.values()]
+    groups.sort(key=lambda group: min(class_rank[key] for key in group))
+    if len(groups) < 3:
+        raise ValueError("Need at least three duplicate-linked class groups for train/val/test")
 
     train_target = int(len(classes) * .6)
-    val_target = int(len(classes) * .2)
-    test_target = len(classes) - train_target - val_target
-    if min(train_target, val_target, test_target) < 1:
+    val_end_target = int(len(classes) * .8)
+    if min(train_target, val_end_target - train_target, len(classes) - val_end_target) < 1:
         raise ValueError("Need enough classes for train/val/test")
-    val, remaining = take_exact(groups, val_target)
-    test, remaining = take_exact(remaining, test_target)
-    assignments = {key: "train" for group in remaining for key in group}
+
+    # Choose contiguous group boundaries closest to the cumulative 60% and
+    # 80% targets. This preserves alphabetical ordering and duplicate groups.
+    prefix = [0]
+    for group in groups:
+        prefix.append(prefix[-1] + len(group))
+    candidates = (
+        (abs(prefix[i] - train_target) + abs(prefix[j] - val_end_target), i, j)
+        for i in range(1, len(groups) - 1)
+        for j in range(i + 1, len(groups))
+    )
+    _, train_end, val_end = min(candidates)
+    train = [key for group in groups[:train_end] for key in group]
+    val = [key for group in groups[train_end:val_end] for key in group]
+    test = [key for group in groups[val_end:] for key in group]
+    assignments = {key: "train" for key in train}
     assignments.update({key: "val" for key in val})
     assignments.update({key: "test" for key in test})
     return assignments
@@ -155,8 +163,11 @@ def main(argv=None):
     for split, pool in pools.items():
         (splits_dir / f"{split}_classes.json").write_text(json.dumps(sorted(pool), indent=2))
     protocol = {"name": "local_WLASL_global_content_dedup_class_disjoint",
-                "published_protocol": False, "seed": args.seed, "target_class_ratios": [0.6, 0.2, 0.2],
-                "rounding": "floor(0.6*N) train, floor(0.2*N) val; remaining classes test",
+                "published_protocol": False,
+                "split_seed": None,
+                "split_order": "alphabetical by gloss (case-insensitive); duplicate-linked classes stay together",
+                "target_class_ratios": [0.6, 0.2, 0.2],
+                "rounding": "contiguous alphabetical group boundaries nearest floor(0.6*N) and floor(0.8*N); linked groups can shift counts",
                 "min_unique_valid_videos_per_class": args.min_videos,
                 "deduplication": "global exact source SHA256; prefer least populated class, then video ID",
                 "split_groups": "connected classes sharing source content in the original audited pool",
