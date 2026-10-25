@@ -235,14 +235,16 @@ checkpoint. Code không tải MS-ASL/SIGNUM/AUTSL hay tự đặt subset của p
 
 ### Chọn metric matching
 
-`head.matcher` chọn cách chấm điểm query–prototype: `euclidean` (mặc định, squared
-Euclidean trên embedding chuẩn hóa) hoặc `relation`. Relation mode dùng một scorer
-pairwise học được trên `[query, prototype, query-prototype, query*prototype]` cho
-global và từng part; scorer được tối ưu cùng encoder bằng episodic cross-entropy.
-Chọn `head.matcher: relation` trong YAML và dùng `output_dir` mới để train. Không
-đổi matcher khi evaluate/resume checkpoint: config matcher phải khớp run đã train.
-Để so sánh công bằng, giữ nguyên seed, episode files, encoder config và lịch train;
-Relation Network có thêm tham số và cần được train từ đầu.
+`head.matcher` chọn cách chấm điểm: `euclidean` (mặc định, squared Euclidean trên
+embedding chuẩn hóa), `relation`, hoặc `hausdorff` (metric cố định). Relation mode
+giữ Relation Network học được và thêm ba thống kê khoảng cách từ query tới tập
+support observations bên cạnh các pair features: Hausdorff (shot xa nhất), trung
+bình, và shot gần nhất. Điều này cho phép scorer học cách cân bằng Hausdorff với
+độ phân tán của support khi có nhiều shot. Khoảng cách được tính cho global
+feature và từng part, không gộp support shots trước đó. Chọn
+`head.matcher: relation` trong YAML và dùng `output_dir` mới để train. Không đổi
+matcher khi evaluate/resume checkpoint: config matcher phải khớp run đã train.
+Để so sánh công bằng, giữ nguyên seed, episode files, encoder config và lịch train.
 
 ## 5. Ablation A0–A5
 

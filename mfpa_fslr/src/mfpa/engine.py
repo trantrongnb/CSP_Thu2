@@ -23,8 +23,8 @@ from .utils.metrics import episodic_accuracy_summary
 def build_model(config):
     model = MFPAFSLR(**config["model"])
     matcher = config.get("head", {}).get("matcher", "euclidean")
-    if matcher not in {"euclidean", "relation"}:
-        raise ValueError("head.matcher must be 'euclidean' or 'relation'")
+    if matcher not in {"euclidean", "relation", "hausdorff"}:
+        raise ValueError("head.matcher must be 'euclidean', 'relation', or 'hausdorff'")
     if matcher == "relation":
         model.relation_network = RelationNetwork(config["model"].get("dimension", 128))
     return model

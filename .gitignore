@@ -4,7 +4,7 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 mfpa_fslr/data/
-mfpa_fslr/outputs*/
+*.pt
 /WLASL.zip
 /WLASL/
 .vscode/

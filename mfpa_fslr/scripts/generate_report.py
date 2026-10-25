@@ -2,6 +2,8 @@
 """Generate a Markdown experiment report from MFPA-FSLR output artifacts."""
 
 import argparse
+import csv
+import hashlib
 import json
 from pathlib import Path
 
@@ -74,20 +76,36 @@ def parse_scalar(value):
             return value
 
 
-def find_audit(outputs_roots, explicit=None):
-    if explicit:
-        return read_json(explicit), Path(explicit)
-    candidates = sorted({
-        path for outputs in outputs_roots
-        for pattern in ("wlasl_training_readiness/report_*.json",
-                        "*/wlasl_training_readiness/report_*.json")
-        for path in outputs.glob(pattern)
-    })
-    for path in candidates:
-        data = read_json(path)
-        if data:
-            return data, path
-    return {}, None
+def metadata_path(config):
+    value = config.get("data", {}).get("metadata")
+    if not value:
+        return None
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else ROOT / path
+
+
+def metadata_split_counts(config):
+    """Count videos/classes from the metadata file referenced by config.yaml."""
+    path = metadata_path(config)
+    if path is None or not path.is_file():
+        return None
+    counts = {split: {"videos": 0, "classes": set()} for split in ("train", "val", "test")}
+    try:
+        with path.open(newline="", encoding="utf-8") as handle:
+            for row in csv.DictReader(handle):
+                split = row.get("split", "").strip().lower()
+                if split not in counts:
+                    continue
+                counts[split]["videos"] += 1
+                class_id = row.get("class_id") or row.get("gloss")
+                if class_id:
+                    counts[split]["classes"].add(class_id)
+    except (OSError, csv.Error):
+        return None
+    return {
+        split: {"videos": values["videos"], "classes": len(values["classes"])}
+        for split, values in counts.items()
+    }
 
 
 def find_evaluations(run_dir):
@@ -157,9 +175,6 @@ def main():
                         help="Output directory to scan; repeat to specify multiple directories")
     parser.add_argument("--outputs-root", type=Path, default=ROOT,
                         help="Directory under which all outputs* directories are discovered")
-    parser.add_argument("--audit", type=Path,
-                        help="Optional readiness audit JSON (auto-discovered by default)")
-    parser.add_argument("--preprocess-config", type=Path, default=ROOT / "configs/preprocess.yaml")
     parser.add_argument("--output", type=Path, default=ROOT.parent / "README.md",
                         help="Markdown destination (default: repository-root REPORT.md)")
     args = parser.parse_args()
@@ -171,23 +186,6 @@ def main():
     if not outputs_roots:
         parser.error(f"No outputs* directories found under {args.outputs_root}")
     runs = find_runs(outputs_roots)
-    audit_records = []
-    if args.audit:
-        audit_data = read_json(args.audit)
-        if audit_data:
-            audit_records.append((Path(args.audit), audit_data))
-    else:
-        for outputs_root in outputs_roots:
-            for pattern in ("wlasl_training_readiness/report_*.json",
-                            "*/wlasl_training_readiness/report_*.json"):
-                for path in sorted(outputs_root.glob(pattern)):
-                    data = read_json(path)
-                    if data and all(data.get("input_metadata_sha256") != existing.get("input_metadata_sha256")
-                                    for _, existing in audit_records):
-                        audit_records.append((path, data))
-    audit_records.sort(key=lambda pair: str(pair[0]))
-    audit, audit_path = audit_records[0][1], audit_records[0][0] if audit_records else ({}, None)
-    preprocess = load_config(args.preprocess_config)
 
     lines = [
         "# BÁO CÁO KẾT QUẢ THỰC NGHIỆM",
@@ -215,22 +213,30 @@ def main():
     lines.extend([
         f"| Tên phương pháp | MFPA-FSLR {', '.join(variants) if variants else ''} |",
         f"| Dataset chính | {', '.join(datasets) if datasets else 'chưa có trong config'} |",
-        f"| Số frame đầu vào | {preprocess.get('target_frames', 'chưa có')} frame/video |",
+        "| Số frame đầu vào | Không được ghi trong config.yaml của run |",
     ])
     split_summaries = []
-    for audit_path_i, audit_i in audit_records:
-        counts = audit_i.get("metadata_split_counts", {})
-        if counts:
-            split_summaries.append(
-                f"{audit_path_i.parent.parent.name}: train {counts.get('train', 'chưa có'):,} / "
-                f"eval {counts.get('val', 'chưa có'):,} / test {counts.get('test', 'chưa có'):,} video"
-            )
+    seen_metadata = set()
+    for run in runs:
+        path = metadata_path(run["config"])
+        counts = metadata_split_counts(run["config"])
+        if path is None or counts is None:
+            continue
+        metadata_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+        if metadata_hash in seen_metadata:
+            continue
+        seen_metadata.add(metadata_hash)
+        split_summaries.append(
+            f"{path.name}: train {counts['train']['videos']:,} video/{counts['train']['classes']:,} lớp; "
+            f"val {counts['val']['videos']:,}/{counts['val']['classes']:,}; "
+            f"test {counts['test']['videos']:,}/{counts['test']['classes']:,}"
+        )
     if split_summaries:
         train_eval_test = "; ".join(split_summaries)
     else:
-        train_eval_test = "chưa có trong audit JSON"
+        train_eval_test = "metadata.csv từ config.yaml không khả dụng"
     lines.extend([
-        f"| Tỉ lệ Train : Eval : Test | Theo lớp theo protocol; {train_eval_test} |",
+        f"| Số mẫu Train / Val / Test | Từ metadata được chỉ định trong config.yaml; {train_eval_test} |",
         f"| Seed | {', '.join(map(str, seeds)) if seeds else 'chưa có trong config'} |",
         "",
         "## 2. Cấu hình huấn luyện",
@@ -329,17 +335,7 @@ def main():
         "## 5. Ghi chú thực nghiệm",
         "",
     ])
-    if audit_records:
-        for audit_path_i, audit_i in audit_records:
-            eligibility = audit_i.get("eligibility", {}).get("A5", {})
-            lines.append(
-                f"- Audit `{clean(audit_path_i)}`: kiểm tra {audit_i.get('checked_videos', 'không rõ'):,} video; "
-                f"cache errors: {len(audit_i.get('cache_errors', []))}. "
-                f"Lớp đủ điều kiện 1-shot Q=5: {eligibility.get('classes_eligible_1shot_Q5', 'không rõ'):,}; "
-                f"5-shot Q=5: {eligibility.get('classes_eligible_5shot_Q5', 'không rõ'):,}."
-            )
-    else:
-        lines.append("- Không tìm thấy readiness audit JSON; thống kê dataset được để trống.")
+    lines.append("- Dataset split được đếm từ metadata.csv theo đường dẫn data.metadata trong từng config.yaml.")
     for run in runs:
         metrics = run["metrics"]
         best = max(metrics, key=lambda row: row.get("val_accuracy_pct", float("-inf")))
@@ -363,7 +359,7 @@ def main():
         "",
         "---",
         "",
-        f"Được tạo tự động từ {len(outputs_roots)} thư mục outputs*, config, `metrics.jsonl`, evaluation JSON và readiness audit.",
+        f"Được tạo tự động từ {len(outputs_roots)} thư mục outputs*, config.yaml, `metrics.jsonl` và evaluation JSON.",
         "",
     ])
 

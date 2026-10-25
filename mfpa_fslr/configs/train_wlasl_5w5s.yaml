@@ -1,6 +1,6 @@
 # Same metadata/classes as train_wlasl_5w1s.yaml; only K changes.
 seed: 42
-output_dir: outputs/WLASL_60_20_20_A5_5w5s_alpha_seed42
+output_dir: outputs_relation_hausdorff_stats_5s/WLASL_60_20_20_A5_5w5s_alpha_seed42
 data:
   metadata: data/wlasl_60_20_20/metadata.csv
   cache_dir: data/processed_wlasl_farneback
@@ -10,7 +10,7 @@ model:
   normalization: group
   regions: [0, 1, 2]
 head:
-  matcher: euclidean  # Alternatives: relation (trainable query/prototype scorer)
+  matcher: relation  # Relation Network receives Hausdorff set-distance features
   lambda_part: 1.0
   beta_d: 1.0
   beta_q: 0.5
@@ -23,8 +23,8 @@ training:
   k_shot: 5
   queries_per_class: 5
   episodes_per_epoch: 1000
-  max_epochs: 100
-  lr: 0.0001
+  max_epochs: 20
+  lr: 0.001
   weight_decay: 0.0001
   grad_clip: 1.0
   amp: true

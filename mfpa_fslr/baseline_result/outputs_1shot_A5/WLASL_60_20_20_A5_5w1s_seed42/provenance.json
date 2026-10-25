@@ -1,0 +1,11 @@
+{
+  "dependencies": {
+    "torch": "2.11.0+cu128",
+    "torchvision": "0.26.0+cu128",
+    "numpy": "1.26.4",
+    "mediapipe": "1.1.1",
+    "opencv-python-headless": null,
+    "mfpa-fslr": null
+  },
+  "git_commit": "cfaed5d6b4d328efbc3a8a4297ade5dc78a97de6"
+}
