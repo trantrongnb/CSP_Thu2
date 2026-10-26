@@ -7,6 +7,7 @@ Usage: bash scripts/run_conda.sh [--env signclip_5090|sign5090|manta] COMMAND [A
 
 Commands: check, train, evaluate, episodes
 Default command: check. Default environment: signclip_5090.
+For WLASL training, pass --dataset-root PATH to specify the raw dataset directory.
 Uses the conda interpreter directly and the existing CUDA MPS daemon.
 CUDA checks have a 30-second timeout; override with MFPA_CUDA_CHECK_TIMEOUT (seconds).
 EOF
@@ -111,20 +112,46 @@ fi
 
 if [[ "$action" == "train" && "${show_help:-false}" == false ]]; then
   config_path=""
+  dataset_root=""
+  filtered_args=()
   for ((i=0; i<${#args[@]}; i++)); do
     case "${args[i]}" in
       --config)
         config_path="${args[i+1]:-}"
-        break
+        filtered_args+=("${args[i]}" "${args[i+1]:-}")
+        ((i+=1))
         ;;
       --config=*)
         config_path="${args[i]#--config=}"
-        break
+        filtered_args+=("${args[i]}")
+        ;;
+      --dataset-root)
+        if [[ -n "$dataset_root" || -z "${args[i+1]:-}" || "${args[i+1]}" == --* ]]; then
+          echo "--dataset-root requires one directory path and may be specified only once." >&2
+          exit 2
+        fi
+        dataset_root="${args[i+1]}"
+        ((i+=1))
+        ;;
+      --dataset-root=*)
+        if [[ -n "$dataset_root" || -z "${args[i]#--dataset-root=}" ]]; then
+          echo "--dataset-root requires one directory path and may be specified only once." >&2
+          exit 2
+        fi
+        dataset_root="${args[i]#--dataset-root=}"
+        ;;
+      *)
+        filtered_args+=("${args[i]}")
         ;;
     esac
   done
+  args=("${filtered_args[@]}")
   if [[ "$(basename -- "$config_path")" == train_wlasl_*.yaml ]]; then
-    run_supervised "$python_path" "$package_dir/scripts/prepare_dataset.py" --config "$config_path"
+    prepare_args=(--config "$config_path")
+    if [[ -n "$dataset_root" ]]; then
+      prepare_args+=(--dataset-root "$dataset_root")
+    fi
+    run_supervised "$python_path" "$package_dir/scripts/prepare_dataset.py" "${prepare_args[@]}"
     prepared_config="$package_dir/outputs/.prepared_$(basename -- "${config_path%.*}").yaml"
     for ((i=0; i<${#args[@]}; i++)); do
       case "${args[i]}" in
@@ -133,6 +160,9 @@ if [[ "$action" == "train" && "${show_help:-false}" == false ]]; then
       esac
     done
     set -- "${args[@]}"
+  elif [[ -n "$dataset_root" ]]; then
+    echo "--dataset-root is only supported with configs/train_wlasl_*.yaml." >&2
+    exit 2
   fi
 fi
 run_supervised "$python_path" "$package_dir/scripts/conda_entry.py" "$action" "$@"
