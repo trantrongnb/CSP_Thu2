@@ -1,9 +1,9 @@
 .venv/
+.venv-*/
 __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
-mfpa_fslr/data/
-mfpa_fslr/outputs/
-/WLASL.zip
-/WLASL/
+/data/
+/outputs/
+/.torch_hub/
