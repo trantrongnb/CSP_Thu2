@@ -109,6 +109,11 @@ bash scripts/run_conda.sh train --config configs/train_wlasl_5w1s.yaml
 bash scripts/run_conda.sh train --config configs/train_wlasl_5w5s.yaml
 ```
 
+Hai cấu hình WLASL chạy episodic few-shot training trực tiếp. Khi
+`head.matcher: relation`, Relation Network được khởi tạo theo seed cấu hình và
+được học cùng model bằng few-shot episodes; validation và `mfpa-evaluate` dùng
+episode protocol few-shot hiện tại.
+
 For these WLASL configs, `run_conda.sh train` first runs
 `scripts/prepare_dataset.py`: it creates source metadata if needed, fills missing
 video caches, audits cache/source consistency, and builds a content-deduplicated
@@ -148,6 +153,11 @@ mfpa-preprocess --metadata data/metadata.csv \
   --config configs/preprocess.yaml --output data/processed_farneback --limit 20
 mfpa-visualize --video /data/videos/v0001.mp4 \
   --cache data/processed_farneback/v0001.npz --output outputs/debug/v0001.mp4
+mfpa-visualize-flow --cache data/processed_farneback/v0001.npz \
+  --output outputs/debug/v0001_flow.mp4 --mode hsv
+# If the MP4 codec is unavailable in OpenCV, use an AVI with MJPG:
+mfpa-visualize-flow --cache data/processed_farneback/v0001.npz \
+  --output outputs/debug/v0001_flow.avi --codec MJPG --mode hsv
 # Sau khi kiểm tra overlay trên >=20 clips, xử lý toàn bộ:
 mfpa-preprocess --metadata data/metadata.csv \
   --config configs/preprocess.yaml --output data/processed_farneback
@@ -157,6 +167,9 @@ Preprocessing gồm decode, letterbox 256×256, uniform sample 16 frames, Holist
 flow giữa 15 cặp frame, union ROI t/t+1 và crop 64×64. Flow luôn tính trên **full
 aligned frames** trước khi crop. Clip dưới 16 frames lặp frame cuối với mask 0.
 Video một frame được cache nhưng sẽ bị Dataset từ chối vì không có transition thật.
+`mfpa-visualize-flow` renders cached flow without needing the source video. Use
+`--mode arrows` for a sparse vector-field view, `--part LH|RH|M` for one ROI, or
+`.png` output for a vertical contact sheet of all transitions.
 
 Mặc định flow theo pixel ROI: `u *= 64/roi_width`, `v *= 64/roi_height`; chia scale
 cố định 20, clip [-5,5], lưu float16. `flow_scale=20` là giá trị khởi tạo, chưa tune.

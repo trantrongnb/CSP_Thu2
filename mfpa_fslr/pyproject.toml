@@ -20,6 +20,7 @@ mfpa-train = "mfpa.engine:train_main"
 mfpa-evaluate = "mfpa.engine:evaluate_main"
 mfpa-episodes = "mfpa.datasets.episode_sampler:main"
 mfpa-visualize = "mfpa.preprocessing.visualize:main"
+mfpa-visualize-flow = "scripts.visualize_optical_flow:main"
 mfpa-smoke = "mfpa.smoke:main"
 
 [tool.setuptools.packages.find]

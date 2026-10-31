@@ -1,0 +1,12 @@
+{"epoch": 1, "train_loss": 0.7491560798436403, "train_accuracy_pct": 74.98799790143967, "val_accuracy_pct": 81.95999792218208, "val_ci95_half_width_pct": 2.08619244031467}
+{"epoch": 2, "train_loss": 0.637839891128242, "train_accuracy_pct": 79.46799782812596, "val_accuracy_pct": 83.7999974489212, "val_ci95_half_width_pct": 1.9376993619708256}
+{"epoch": 3, "train_loss": 0.5790436791311949, "train_accuracy_pct": 81.27199774086475, "val_accuracy_pct": 83.2799978852272, "val_ci95_half_width_pct": 2.1387571887792256}
+{"epoch": 4, "train_loss": 0.562186185169965, "train_accuracy_pct": 81.8719977915287, "val_accuracy_pct": 84.39999771118164, "val_ci95_half_width_pct": 1.819122978720781}
+{"epoch": 5, "train_loss": 0.5334207841185853, "train_accuracy_pct": 82.37999784052371, "val_accuracy_pct": 85.79999721050262, "val_ci95_half_width_pct": 1.773762020849723}
+{"epoch": 6, "train_loss": 0.4902366912504658, "train_accuracy_pct": 84.44799775779248, "val_accuracy_pct": 86.11999773979187, "val_ci95_half_width_pct": 1.818969443978992}
+{"epoch": 7, "train_loss": 0.4606649007773958, "train_accuracy_pct": 84.96399773657322, "val_accuracy_pct": 85.11999762058258, "val_ci95_half_width_pct": 1.8176890272840531}
+{"epoch": 8, "train_loss": 0.4554540323880501, "train_accuracy_pct": 84.96799784600735, "val_accuracy_pct": 86.63999781012535, "val_ci95_half_width_pct": 1.818167123202833}
+{"epoch": 9, "train_loss": 0.39964941060729325, "train_accuracy_pct": 86.67599788606167, "val_accuracy_pct": 85.99999770522118, "val_ci95_half_width_pct": 2.0165970281746324}
+{"epoch": 10, "train_loss": 0.4121144490223378, "train_accuracy_pct": 86.41999779641628, "val_accuracy_pct": 85.11999750137329, "val_ci95_half_width_pct": 1.8414435758427703}
+{"epoch": 11, "train_loss": 0.3751533528240398, "train_accuracy_pct": 87.07999781668187, "val_accuracy_pct": 85.67999738454819, "val_ci95_half_width_pct": 1.8982228852219365}
+{"epoch": 12, "train_loss": 0.3608573725373717, "train_accuracy_pct": 87.87599795460702, "val_accuracy_pct": 85.19999757409096, "val_ci95_half_width_pct": 1.88614802422503}

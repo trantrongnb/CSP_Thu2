@@ -1,0 +1,47 @@
+seed: 42
+output_dir: outputs_1s_relation_contrastive/WLASL_60_20_20_A5_5w1s_alpha_seed42
+data:
+  metadata: /home/iec/disk2/cuongpd/dung36838/CSP_Thu2/mfpa_fslr/data/wlasl_prepared_60_20_20/4996e1a6b2d6e73b6ad8b34567ced6a41d0f13d6d6ae836715bcf9930d35151d_0abb041f968d3760_alphabetical_v1/metadata.csv
+  cache_dir: /home/iec/disk2/cuongpd/dung36838/CSP_Thu2/mfpa_fslr/data/processed_wlasl_farneback
+model:
+  dimension: 128
+  variant: A5
+  normalization: group
+  regions:
+  - 0
+  - 1
+  - 2
+head:
+  matcher: relation
+  lambda_part: 1.0
+  beta_d: 1.0
+  beta_q: 0.5
+  tau_alpha: 1.0
+  rho: 0.8
+  tau_s: 0.2
+  detach_alpha: false
+self_supervised:
+  enabled: true
+  objective: relation_contrastive
+  epochs: 10
+  batch_size: 64
+  lr: 0.0001
+  weight_decay: 0.0001
+  temperature: 0.1
+  amp: true
+  grad_clip: 1.0
+training:
+  n_way: 5
+  k_shot: 1
+  queries_per_class: 5
+  episodes_per_epoch: 1000
+  max_epochs: 20
+  lr: 0.001
+  weight_decay: 0.0001
+  grad_clip: 1.0
+  amp: true
+  log_every: 100
+evaluation:
+  val_episodes_file: /home/iec/disk2/cuongpd/dung36838/CSP_Thu2/mfpa_fslr/data/wlasl_prepared_60_20_20/4996e1a6b2d6e73b6ad8b34567ced6a41d0f13d6d6ae836715bcf9930d35151d_0abb041f968d3760_alphabetical_v1/episodes/val_5w1s_seed42.json
+  val_episodes: 100
+  seed: 42
