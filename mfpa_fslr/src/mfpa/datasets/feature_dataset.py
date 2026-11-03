@@ -47,23 +47,40 @@ def structural_features(cache):
     hv, mv = cache["hand_valid"].astype(bool), cache["mouth_valid"].astype(bool)
     hc, mc = cache["hand_center"].astype(np.float32), cache["mouth_center"].astype(np.float32)
     transition = cache["transition_valid"].astype(bool)
-    # A fixed coordinate rule; no validation/test-derived normalization statistics.
-    hand_scale = np.maximum(np.ptp(hands[..., :2], axis=2).max(axis=-1), 1e-6)
+    # Shoulder-relative locations and a 3D bone length avoid camera-coordinate scale.
+    pose = cache.get("pose_lm", np.zeros((len(hands), 33, 3), np.float32)).astype(np.float32)
+    shoulder = (pose[:, 11, :2] + pose[:, 12, :2]) / 2
+    raw_width = np.linalg.norm(pose[:, 11, :2] - pose[:, 12, :2], axis=-1)
+    pose_ok = raw_width > 0.02
+    shoulder[~pose_ok] = 0.5
+    shoulder_width = np.where(pose_ok, raw_width, 1.0)
+    hand_scale = np.maximum(np.linalg.norm(hands[:, :, 9] - hands[:, :, 0], axis=-1), 1e-4)
     hand_relative = (hands - hands[:, :, :1]) / hand_scale[..., None, None]
     mouth_scale = np.maximum(np.ptp(mouth[..., :2], axis=1).max(axis=-1), 1e-6)
     mouth_relative = (mouth - mouth.mean(axis=1, keepdims=True)) / mouth_scale[:, None, None]
-    hand_delta = np.diff(hc, axis=0) * (hv[:-1] & hv[1:])[..., None]
-    mouth_delta = np.diff(mc, axis=0) * (mv[:-1] & mv[1:])[:, None]
-    hand_struct = np.concatenate([hand_relative[:-1].reshape(len(transition), 2, 63), hc[:-1], hand_delta], axis=-1)
-    mouth_struct = np.concatenate([mouth_relative[:-1].reshape(len(transition), 120), mc[:-1], mouth_delta], axis=-1)
+    bones = hands[:, :, 1:] - hands[:, :, :1]
+    bones /= np.maximum(np.linalg.norm(bones, axis=-1, keepdims=True), 1e-5)
+    body_hand = (hc - shoulder[:, None]) / shoulder_width[:, None, None]
+    body_mouth = (mc - shoulder) / shoulder_width[:, None]
+    hand_delta = np.diff(body_hand, axis=0) * (hv[:-1] & hv[1:])[..., None]
+    mouth_delta = np.diff(body_mouth, axis=0) * (mv[:-1] & mv[1:])[:, None]
+    relation = np.concatenate([body_hand - body_hand[:, ::-1], body_hand - body_mouth[:, None]], axis=-1)
+    relation_delta = np.diff(relation, axis=0) * (hv[:-1] & hv[1:])[..., None]
+    hand_struct = np.concatenate([hand_relative[:-1].reshape(len(transition), 2, 63),
+                                  bones[:-1].reshape(len(transition), 2, 60),
+                                  body_hand[:-1], hand_delta, relation[:-1], relation_delta], axis=-1)
+    mouth_struct = np.concatenate([mouth_relative[:-1].reshape(len(transition), 120),
+                                   body_mouth[:-1], mouth_delta], axis=-1)
     hand_struct *= (hv[:-1] & transition[:, None])[..., None]
     mouth_struct *= (mv[:-1] & transition)[:, None]
     structural_valid = np.concatenate([hv[:-1], mv[:-1, None]], axis=1).T & transition[None, :]
     quality = cache["flow_quality"].astype(np.float32) * transition[None, :]
-    flow = cache["flow"].astype(np.float32)
-    flow = np.where((quality > 0)[..., None, None, None], flow, 0.0)
+    quality_vector = cache.get("flow_quality_vector", np.repeat(quality[..., None], 6, axis=-1)).astype(np.float32)
+    quality_vector *= transition[None, :, None]
+    flow = cache["flow"].copy()
+    flow[quality <= 0] = 0
     return {"flow": flow, "hand_struct": hand_struct.transpose(1, 0, 2),
-            "mouth_struct": mouth_struct, "quality": quality,
+            "mouth_struct": mouth_struct, "quality": quality, "quality_vector": quality_vector,
             "valid_mask": structural_valid | (quality > 0), "struct_valid": structural_valid,
             "transition_valid": transition}
 
@@ -111,6 +128,7 @@ class FeatureDataset:
         self.by_id = {r["video_id"]: r for r in self.rows}
         self.class_to_videos = {}
         self.config_hash = None
+        self._features = {}
         shape = None
         for row in self.rows:
             vid = row["video_id"]
@@ -126,6 +144,8 @@ class FeatureDataset:
             if cache["flow"].shape != shape:
                 raise ValueError(f"Mixed flow dimensions in cache: {vid}")
             inputs = structural_features(cache)
+            self._features[vid] = {key: torch.from_numpy(np.ascontiguousarray(value))
+                                   for key, value in inputs.items()}
             usable = (inputs["struct_valid"] if variant == "A0" else
                       inputs["quality"] > 0 if variant == "A1" else inputs["valid_mask"])
             if not usable[list(regions)].any():
@@ -145,5 +165,4 @@ class FeatureDataset:
         vid = self.rows[index]["video_id"] if isinstance(index, int) else index
         if vid not in self.by_id:
             raise KeyError(f"Video {vid} is outside split {self.split}")
-        return {key: torch.from_numpy(np.ascontiguousarray(value))
-                for key, value in structural_features(self._load(vid)).items()}
+        return self._features[vid]

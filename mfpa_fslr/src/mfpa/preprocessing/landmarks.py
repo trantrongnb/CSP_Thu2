@@ -97,17 +97,18 @@ def extract_landmarks(rgb, model_complexity=1, detection_confidence=0.5, trackin
         raise RuntimeError("Install mfpa-fslr[landmarks] (MediaPipe 0.10.30 or newer)") from exc
     t = len(rgb)
     hands, mouth = np.zeros((t, 2, 21, 3), np.float32), np.zeros((t, 40, 3), np.float32)
+    pose = np.zeros((t, 33, 3), np.float32)
     hv, mv = np.zeros((t, 2), bool), np.zeros(t, bool)
 
     legacy = getattr(getattr(mp, "solutions", None), "holistic", None)
     if hasattr(legacy, "Holistic"):
-        with _hide_feedback_manager_warning(), legacy.Holistic(
+        with legacy.Holistic(
             static_image_mode=False, model_complexity=model_complexity, refine_face_landmarks=False,
             min_detection_confidence=detection_confidence, min_tracking_confidence=tracking_confidence,
         ) as detector:
             for frame, image in enumerate(rgb):
                 result = detector.process(image)
-                _copy_result(result, frame, hands, mouth, hv, mv, legacy=True)
+                _copy_result(result, frame, hands, mouth, hv, mv, pose, legacy=True)
     else:
         vision = mp.tasks.vision
         options = vision.HolisticLandmarkerOptions(
@@ -117,18 +118,18 @@ def extract_landmarks(rgb, model_complexity=1, detection_confidence=0.5, trackin
             min_face_landmarks_confidence=detection_confidence,
             min_hand_landmarks_confidence=detection_confidence,
         )
-        with _hide_feedback_manager_warning(), vision.HolisticLandmarker.create_from_options(options) as detector:
+        with vision.HolisticLandmarker.create_from_options(options) as detector:
             for frame, image in enumerate(rgb):
                 task_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=np.ascontiguousarray(image))
                 result = detector.detect(task_image)
-                _copy_result(result, frame, hands, mouth, hv, mv, legacy=False)
+                _copy_result(result, frame, hands, mouth, hv, mv, pose, legacy=False)
     hands[~hv], mouth[~mv] = 0, 0
-    return {"hand_lm": hands, "mouth_lm": mouth, "hand_valid": hv, "mouth_valid": mv,
+    return {"hand_lm": hands, "mouth_lm": mouth, "pose_lm": pose, "hand_valid": hv, "mouth_valid": mv,
             "hand_center": hands[..., :2].mean(axis=2), "mouth_center": mouth[..., :2].mean(axis=1),
             "mediapipe_version": np.array(getattr(mp, "__version__", version("mediapipe")))}
 
 
-def _copy_result(result, frame, hands, mouth, hand_valid, mouth_valid, *, legacy):
+def _copy_result(result, frame, hands, mouth, hand_valid, mouth_valid, pose, *, legacy):
     hand_points = (result.left_hand_landmarks, result.right_hand_landmarks)
     for part, points in enumerate(hand_points):
         if points:
@@ -147,3 +148,7 @@ def _copy_result(result, frame, hands, mouth, hand_valid, mouth_valid, *, legacy
             mouth[frame] = [(face_points[i].x, face_points[i].y, face_points[i].z)
                             for i in MOUTH_INDICES]
         mouth_valid[frame] = np.isfinite(mouth[frame]).all()
+    pose_points = getattr(result, "pose_landmarks", None)
+    if pose_points:
+        values = pose_points.landmark if legacy else pose_points
+        pose[frame] = [(point.x, point.y, point.z) for point in values]

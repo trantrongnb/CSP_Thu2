@@ -16,4 +16,4 @@ def encode_episode(model, dataset, episode, device):
     query = {key: value[support_count:] for key, value in features.items()
              if key in {"global", "parts", "part_quality"}}
     labels = torch.tensor(episode["query_labels"], dtype=torch.long, device=device)
-    return support, query, labels
+    return support, query, labels, features["global"]

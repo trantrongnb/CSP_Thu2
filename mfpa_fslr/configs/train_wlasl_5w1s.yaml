@@ -3,12 +3,14 @@ seed: 42
 output_dir: outputs_1s_relation_hausdorff_stats/WLASL_60_20_20_A5_5w1s_alpha_seed42
 data:
   metadata: data/wlasl_60_20_20/metadata.csv
-  cache_dir: data/processed_wlasl_farneback
+  cache_dir: data/processed_wlasl_v2_dis
 model:
   dimension: 128
   variant: A5
   normalization: group
   regions: [0, 1, 2]
+  flow_dropout: 0.15
+  structure_dropout: 0.1
 head:
   matcher: relation  # Relation matching scored by symmetric Hausdorff distance
   lambda_part: 1.0
@@ -28,6 +30,9 @@ training:
   weight_decay: 0.0001
   grad_clip: 1.0
   amp: true
+  auxiliary_ce: true
+  auxiliary_ce_weight: 0.2
+  episodes_per_update: 4
   log_every: 100
 evaluation:
   val_episodes_file: data/wlasl_60_20_20/episodes/val_5w1s_seed123.json

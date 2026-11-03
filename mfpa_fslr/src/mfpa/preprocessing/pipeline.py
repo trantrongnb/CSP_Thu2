@@ -12,7 +12,7 @@ import numpy as np
 import yaml
 
 from .landmarks import MOUTH_INDICES, extract_landmarks
-from .optical_flow import FarnebackFlow, RaftSmallFlow
+from .optical_flow import DisFlow, FarnebackFlow, RaftSmallFlow
 from .roi import landmark_box, union_box, valid_fraction, crop_flow
 from .video_frames import read_video
 from ..datasets.feature_dataset import read_metadata
@@ -32,8 +32,10 @@ def progress(index, total, label, started):
         sys.stdout.write("\n")
 
 
-DEFAULTS = {"target_frames": 16, "canvas_size": 256, "roi_size": 64,
-            "flow_estimator": "farneback", "flow_representation": "roi_pixel_displacement",
+DEFAULTS = {"target_frames": 8, "canvas_size": 256, "roi_size": 64,
+            "flow_estimator": "dis", "flow_scale_resolution": 0.5, "flow_gap": 1,
+            "flow_pairing": "midpoint_raw", "flow_temporal_normalization": "none",
+            "flow_representation": "roi_pixel_displacement",
             "flow_scale": 20.0, "flow_clip": 5.0, "cache_dtype": "float16",
             "hand_margin": 1.5, "mouth_margin": 1.8, "model_complexity": 1,
             "detection_confidence": 0.5, "tracking_confidence": 0.5,
@@ -60,7 +62,7 @@ def preprocessing_signature(config, landmark_model=None):
             model_identity = hashlib.sha256(model_path.read_bytes()).hexdigest()
     else:
         model_identity = "legacy-solutions-holistic"
-    payload = {"schema_version": 1, "config": config, "mouth_indices": MOUTH_INDICES,
+    payload = {"schema_version": 2, "config": config, "mouth_indices": MOUTH_INDICES,
                "opencv_version": cv2.__version__, "numpy_version": np.__version__,
                "mediapipe_version": version("mediapipe"), "landmark_model": model_identity}
     if config["flow_estimator"] == "raft_small":
@@ -95,6 +97,7 @@ def pack_features(video, landmarks, estimator, config):
                 boxes[frame, part] = landmark_box(points, size, config["hand_margin"] if part < 2 else config["mouth_margin"])
     flow = np.zeros((3, t - 1, 2, out, out), np.float32)
     quality = np.zeros((3, t - 1), np.float32)
+    quality_vector = np.zeros((3, t - 1, 6), np.float32)
     transition_boxes = np.zeros((t - 1, 3, 4), np.float32)
     for step in range(t - 1):
         if not video["transition_valid"][step]:
@@ -102,7 +105,16 @@ def pack_features(video, landmarks, estimator, config):
         pair_valid = valid[step] & valid[step + 1]
         if not pair_valid.any():
             continue
-        field = estimator(rgb[step], rgb[step + 1])  # Full aligned frames FIRST.
+        pair = video.get("flow_rgb")
+        first, second = (pair[step] if pair is not None and config.get("flow_pairing") == "midpoint_raw"
+                         else (rgb[step], rgb[step + 1]))
+        field = estimator(first, second)
+        backward = estimator(second, first)
+        if config.get("flow_temporal_normalization", "none") == "sampled_gap":
+            raw_gap = max(int(video["sampled_frame_ids"][step + 1] - video["sampled_frame_ids"][step]), 1)
+            factor = raw_gap / max(config.get("flow_gap", 1), 1)
+            field *= factor
+            backward *= factor
         if field.shape != (size, size, 2) or not np.isfinite(field).all():
             raise ValueError("Flow estimator returned invalid field")
         for part in np.flatnonzero(pair_valid):
@@ -111,10 +123,40 @@ def pack_features(video, landmarks, estimator, config):
             quality[part, step] = valid_fraction(box, size, size)
             if quality[part, step] > 0:
                 flow[part, step] = crop_flow(field, box, out, config["flow_representation"])
+                x0, y0, x1, y1 = np.clip(np.rint(box).astype(int), 0, size)
+                yy, xx = np.mgrid[y0:y1, x0:x1]
+                if xx.size:
+                    f = field[y0:y1, x0:x1]
+                    bx = np.clip(np.rint(xx + f[..., 0]).astype(int), 0, size - 1)
+                    by = np.clip(np.rint(yy + f[..., 1]).astype(int), 0, size - 1)
+                    err = np.linalg.norm(f + backward[by, bx], axis=-1)
+                    quality_vector[part, step, 0] = np.mean(err < 1.5 + 0.05 * np.linalg.norm(f, axis=-1))
+                    p0 = landmarks["hand_lm"][step, part, :, :2] if part < 2 else landmarks["mouth_lm"][step, :, :2]
+                    p1 = landmarks["hand_lm"][step + 1, part, :, :2] if part < 2 else landmarks["mouth_lm"][step + 1, :, :2]
+                    raw_gap = max(int(video["sampled_frame_ids"][step + 1] - video["sampled_frame_ids"][step]), 1)
+                    speed = size * np.median(np.linalg.norm(p1 - p0, axis=-1))
+                    if config.get("flow_temporal_normalization", "none") == "none":
+                        speed *= config.get("flow_gap", 1) / raw_gap
+                    quality_vector[part, step, 1] = np.exp(-abs(np.median(np.linalg.norm(f, axis=-1)) - speed) / 12.0)
+                    roi_image = cv2.cvtColor(first[y0:y1, x0:x1], cv2.COLOR_RGB2GRAY)
+                    if roi_image.size:
+                        gx = cv2.Sobel(roi_image, cv2.CV_32F, 1, 0)
+                        gy = cv2.Sobel(roi_image, cv2.CV_32F, 0, 1)
+                        quality_vector[part, step, 2] = min(1.0, float(np.mean(gx*gx + gy*gy)) / 3000)
+                        quality_vector[part, step, 3] = min(1.0, float(np.mean(cv2.Laplacian(roi_image, cv2.CV_32F)**2)) / 800)
+                    quality_vector[part, step, 4] = min(1.0, float((x1-x0)*(y1-y0)) / (size*size))
+                    if part < 2:
+                        s0 = np.linalg.norm(landmarks["hand_lm"][step, part, 9] - landmarks["hand_lm"][step, part, 0])
+                        s1 = np.linalg.norm(landmarks["hand_lm"][step + 1, part, 9] - landmarks["hand_lm"][step + 1, part, 0])
+                        ratio = max(s0, s1, 1e-5) / max(min(s0, s1), 1e-5)
+                        quality_vector[part, step, 5] = float(np.exp(-abs(np.log(ratio)) / 0.25))
+                    else:
+                        quality_vector[part, step, 5] = 1.0
     flow = np.clip(flow / config["flow_scale"], -config["flow_clip"], config["flow_clip"])
-    result = {k: v for k, v in video.items() if k != "rgb"}
+    result = {k: v for k, v in video.items() if k not in {"rgb", "flow_rgb"}}
     result.update(landmarks)
     result.update(flow=flow.astype(config["cache_dtype"]), flow_quality=quality,
+                  flow_quality_vector=quality_vector,
                   flow_valid=quality > 0, roi_box=boxes, transition_roi_box=transition_boxes,
                   canvas_size=np.array(size))
     return result
@@ -139,8 +181,8 @@ def main(argv=None):
         raise ValueError("Invalid sampling or flow normalization config")
     if config["cache_dtype"] not in {"float16", "float32"}:
         raise ValueError("cache_dtype must be float16 or float32")
-    if config["flow_estimator"] not in {"farneback", "raft_small"}:
-        raise ValueError("flow_estimator must be farneback or raft_small")
+    if config["flow_estimator"] not in {"dis", "farneback", "raft_small"}:
+        raise ValueError("flow_estimator must be dis, farneback or raft_small")
     if config["flow_clip"] > np.finfo(config["cache_dtype"]).max:
         raise ValueError("flow_clip exceeds cache dtype range")
     signature, provenance = preprocessing_signature(config, args.landmark_model)
@@ -178,9 +220,13 @@ def main(argv=None):
                 progress(index, len(rows), f"cached {row['video_id']}", progress_start)
             return
         start = time.perf_counter()
-        estimator = (FarnebackFlow(**config["farneback"]) if config["flow_estimator"] == "farneback"
-                     else RaftSmallFlow(args.device, config["num_flow_updates"]))
-        video = read_video(path, config["target_frames"], config["canvas_size"], mirror_value in {"1", "true"})
+        estimator = (DisFlow(config.get("dis_preset", "medium"), config["flow_scale_resolution"])
+                     if config["flow_estimator"] == "dis" else
+                     FarnebackFlow(**config["farneback"]) if config["flow_estimator"] == "farneback" else
+                     RaftSmallFlow(args.device, config["num_flow_updates"]))
+        video = read_video(path, config["target_frames"], config["canvas_size"],
+                           mirror_value in {"1", "true"}, config["flow_gap"],
+                           config.get("flow_pairing", "midpoint_raw"))
         landmarks = extract_landmarks(video["rgb"], config["model_complexity"],
                                       config["detection_confidence"], config["tracking_confidence"],
                                       args.landmark_model)
@@ -190,7 +236,7 @@ def main(argv=None):
         # Atomic publish, so interrupted preprocessing never leaves a partial cache.
         temporary = cache_path.with_suffix(".npz.tmp")
         with temporary.open("wb") as handle:
-            np.savez_compressed(handle, **features)
+            np.savez(handle, **features)
         temporary.replace(cache_path)
         with progress_lock:
             progress(index, len(rows),

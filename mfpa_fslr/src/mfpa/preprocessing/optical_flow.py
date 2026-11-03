@@ -12,6 +12,26 @@ class FarnebackFlow:
                                           cv2.cvtColor(second, cv2.COLOR_RGB2GRAY), None, **self.options)
 
 
+class DisFlow:
+    def __init__(self, preset="medium", scale=0.5):
+        presets = {"fast": cv2.DISOPTICAL_FLOW_PRESET_FAST,
+                   "medium": cv2.DISOPTICAL_FLOW_PRESET_MEDIUM}
+        if preset not in presets or not 0 < scale <= 1:
+            raise ValueError("DIS preset must be fast/medium and scale in (0, 1]")
+        self.dis, self.scale = cv2.DISOpticalFlow_create(presets[preset]), float(scale)
+
+    def __call__(self, first, second):
+        h, w = first.shape[:2]
+        size = (max(8, int(round(w * self.scale / 8)) * 8),
+                max(8, int(round(h * self.scale / 8)) * 8))
+        a = cv2.resize(cv2.cvtColor(first, cv2.COLOR_RGB2GRAY), size)
+        b = cv2.resize(cv2.cvtColor(second, cv2.COLOR_RGB2GRAY), size)
+        field = cv2.resize(self.dis.calc(a, b, None), (w, h), interpolation=cv2.INTER_LINEAR)
+        field[..., 0] *= w / size[0]
+        field[..., 1] *= h / size[1]
+        return field
+
+
 class RaftSmallFlow:
     """Frozen torchvision RAFT-Small; weights downloaded once by torchvision."""
 

@@ -11,6 +11,13 @@ Chạy từ thư mục `CSP/mfpa_fslr`. Workspace dùng conda `signclip_5090` c�
 PyTorch CUDA 12.8, NumPy 1.26 và PyYAML. Python 3.10–3.12 được khuyến nghị cho
 backend MediaPipe đã pin. Môi trường virtualenv CPU cũ đã được gỡ.
 
+Place user-provided video files under `mfpa_fslr/data/videos/` (or keep them
+where they are and use absolute paths in metadata). Put `metadata.csv` at
+`mfpa_fslr/data/metadata.csv`; its `path` column is relative to that CSV or
+absolute and each row needs `video_id,path,gloss,class_id,language,signer_id,split`.
+For WLASL, keep the extracted corpus at `../WLASL` relative to `mfpa_fslr` and run
+the WLASL preparation commands below.
+
 ```bash
 bash scripts/run_conda.sh check
 # Môi trường thay thế:
@@ -82,7 +89,7 @@ Protocol cross-signer có ràng buộc signer riêng chưa được thêm vào s
 
 ### WLASL trong workspace này
 
-Cache đầy đủ ở `data/processed_wlasl_farneback`; metadata dùng để preprocessing là
+Cache đầy đủ ở `data/processed_wlasl_v2_dis`; metadata dùng để preprocessing là
 `data/wlasl_preprocess.csv`. Metadata training riêng ở `data/wlasl_60_20_20/metadata.csv`.
 Đây là **protocol tự xây dựng**, không phải split công bố hay kết quả tái hiện WLASL.
 
@@ -129,7 +136,7 @@ và kiểm tra source hashes, có thể mất vài phút tùy ổ đĩa:
 
 ```bash
 python scripts/audit_wlasl.py --metadata data/wlasl_preprocess.csv \
-  --cache-dir data/processed_wlasl_farneback \
+  --cache-dir data/processed_wlasl_v2_dis \
   --output outputs/wlasl_training_readiness/report_reaudit.json --workers 4
 ```
 
@@ -139,7 +146,7 @@ python scripts/audit_wlasl.py --metadata data/wlasl_preprocess.csv \
 python scripts/prepare_wlasl_training.py \
   --metadata data/wlasl_preprocess.csv \
   --audit outputs/wlasl_training_readiness/report.json \
-  --cache-dir data/processed_wlasl_farneback \
+  --cache-dir data/processed_wlasl_v2_dis \
   --output-dir data/wlasl_rebuilt --min-videos 10 --seed 42
 ```
 
@@ -150,22 +157,23 @@ không dùng pool đó trực tiếp với config 5-shot. Script không ghi đè
 
 ```bash
 mfpa-preprocess --metadata data/metadata.csv \
-  --config configs/preprocess.yaml --output data/processed_farneback --limit 20
+  --config configs/preprocess.yaml --output data/processed_v2_dis --limit 20
 mfpa-visualize --video /data/videos/v0001.mp4 \
-  --cache data/processed_farneback/v0001.npz --output outputs/debug/v0001.mp4
-mfpa-visualize-flow --cache data/processed_farneback/v0001.npz \
+  --cache data/processed_v2_dis/v0001.npz --output outputs/debug/v0001.mp4
+mfpa-visualize-flow --cache data/processed_v2_dis/v0001.npz \
   --output outputs/debug/v0001_flow.mp4 --mode hsv
 # If the MP4 codec is unavailable in OpenCV, use an AVI with MJPG:
-mfpa-visualize-flow --cache data/processed_farneback/v0001.npz \
+mfpa-visualize-flow --cache data/processed_v2_dis/v0001.npz \
   --output outputs/debug/v0001_flow.avi --codec MJPG --mode hsv
 # Sau khi kiểm tra overlay trên >=20 clips, xử lý toàn bộ:
 mfpa-preprocess --metadata data/metadata.csv \
-  --config configs/preprocess.yaml --output data/processed_farneback
+  --config configs/preprocess.yaml --output data/processed_v2_dis
 ```
 
-Preprocessing gồm decode, letterbox 256×256, uniform sample 16 frames, Holistic,
-flow giữa 15 cặp frame, union ROI t/t+1 và crop 64×64. Flow luôn tính trên **full
-aligned frames** trước khi crop. Clip dưới 16 frames lặp frame cuối với mask 0.
+Preprocessing v2 gồm letterbox 256×256, uniform sample 8 frames, Holistic,
+flow cho 7 cặp raw frame gần midpoint (gap 1 mặc định), union ROI giữa hai frame
+mẫu và crop 64×64. DIS medium chạy ở nửa độ phân giải, rồi scale vector về canvas.
+Clip dưới 8 frames lặp frame cuối với mask 0.
 Video một frame được cache nhưng sẽ bị Dataset từ chối vì không có transition thật.
 `mfpa-visualize-flow` renders cached flow without needing the source video. Use
 `--mode arrows` for a sparse vector-field view, `--part LH|RH|M` for one ROI, or
@@ -177,7 +185,8 @@ Có tùy chọn `canvas_pixel_displacement` nếu muốn giữ đơn vị canvas
 valid detections của cả hai frame nhân tỉ lệ diện tích ROI trong canvas; không có
 confidence giả hay per-video min/max normalization. Không có head compensation.
 
-Cache lưu landmarks, centers, masks, sampled IDs, ROI, transform letterbox, mirror
+Cache v2 không nén NPZ để giảm CPU đọc; cần dự trù vài GB cho WLASL. Cache lưu pose,
+hand/face landmarks, quality-vector, centers, masks, sampled IDs, ROI, mirror
 flag, FPS/kích thước gốc, timing, config hash và source-video hash. Manifest lưu
 estimator/version/cấu hình và 40 mouth indices theo thứ tự cố định. Nếu đổi config,
 thư viện estimator, video hoặc mirror flag, dùng cache directory mới. Cache được
@@ -222,7 +231,7 @@ mfpa-train --config configs/train_5w1s.yaml \
 Tạo test episodes một lần cho mỗi N/K/seed, dùng lại cho **mọi phương pháp**:
 
 ```bash
-mfpa-episodes --metadata data/metadata.csv --cache-dir data/processed_farneback \
+mfpa-episodes --metadata data/metadata.csv --cache-dir data/processed_v2_dis \
   --split test --n-way 5 --k-shot 1 --queries-per-class 5 \
   --count 1000 --seed 42 --output data/episodes/test_5w1s_seed42.json
 mfpa-evaluate --checkpoint outputs/A5_5w1s_seed42/best.pt \
@@ -283,9 +292,9 @@ mouth-only, đặt `model.regions: [0,1]` hoặc `[2]`. Nếu toàn bộ vùng �
 
 Các lựa chọn triển khai được xác định rõ:
 
-- Structural hand vector 67D: wrist-relative xyz / max XY bounding extent,
-  center xy và center delta. Mouth 124D: mean-centered xyz / max XY extent,
-  center xy và delta. Cùng một scale chia cả xyz; z không được coi là metric depth.
+- Structural hand vector 127D: wrist-relative xyz chuẩn hóa bởi wrist-to-middle-MCP,
+  20 hướng xương đơn vị, vị trí tương đối vai và delta. Mouth 124D dùng vị trí
+  tương đối vai. Pose landmarks cung cấp shoulder frame.
   Không dùng thống kê val/test. Velocity bằng 0 nếu một trong hai detection thiếu.
 - Landmark ở t vẫn hợp lệ nếu thiếu landmark t+1, nhưng flow/velocity cặp đó bị mask.
   Padding bị mask ở mọi nhánh.

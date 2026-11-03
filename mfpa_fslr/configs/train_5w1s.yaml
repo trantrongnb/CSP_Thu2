@@ -2,12 +2,14 @@ seed: 42
 output_dir: outputs/A5_5w1s_seed42
 data:
   metadata: data/metadata.csv
-  cache_dir: data/processed_farneback
+  cache_dir: data/processed_v2_dis
 model:
   dimension: 128
   variant: A5
   normalization: group  # batch is also supported
   regions: [0, 1, 2]  # anatomical LH, RH, mouth
+  flow_dropout: 0.15
+  structure_dropout: 0.1
 head:
   matcher: euclidean  # Alternatives: relation (trainable query/prototype scorer)
   lambda_part: 1.0
@@ -27,6 +29,9 @@ training:
   weight_decay: 0.0001
   grad_clip: 1.0
   amp: true
+  auxiliary_ce: true
+  auxiliary_ce_weight: 0.2
+  episodes_per_update: 4
   log_every: 100
 evaluation:
   val_episodes_file: data/episodes/val_5w1s_seed123.json

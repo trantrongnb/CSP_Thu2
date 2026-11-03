@@ -30,8 +30,8 @@ def build_model(config):
     return model
 
 
-def score_episode(model, dataset, episode, device, head):
-    support, query, labels = encode_episode(model, dataset, episode, device)
+def score_episode(model, dataset, episode, device, head, return_embeddings=False):
+    support, query, labels, sample_global = encode_episode(model, dataset, episode, device)
     options = {**head}
     lambda_part = options.pop("lambda_part", 1.0)
     options["lam"] = lambda_part if model.variant in {"A4", "A5"} else 0.0
@@ -44,7 +44,8 @@ def score_episode(model, dataset, episode, device, head):
                                       relation_network=getattr(model, "relation_network", None),
                                       **options)
     loss = F.cross_entropy(logits, labels)
-    return logits, labels, loss, alpha
+    result = (logits, labels, loss, alpha)
+    return (*result, sample_global) if return_embeddings else result
 
 
 def dataset_for(config, split, variant=None):
@@ -152,6 +153,9 @@ def train_main(argv=None):
     if (val_document["n_way"], val_document["k_shot"], val_document["queries_per_class"]) != (
         settings["n_way"], settings["k_shot"], settings["queries_per_class"]):
         raise ValueError("Validation episode protocol disagrees with training config")
+    train_class_ids = {key: index for index, key in enumerate(sorted(train.class_to_videos))}
+    if settings.get("auxiliary_ce", True):
+        config["model"]["auxiliary_classes"] = len(train_class_ids)
     model = build_model(config).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=settings["lr"], weight_decay=settings["weight_decay"])
     amp = settings.get("amp", True) and device.type == "cuda"
@@ -179,31 +183,33 @@ def train_main(argv=None):
         sampler = EpisodeSampler(train.class_to_videos, settings["n_way"], settings["k_shot"],
                                  settings["queries_per_class"], config["seed"] + epoch)
         loss_sum, accuracy_sum = 0., 0.
+        episodes_per_update = max(1, int(settings.get("episodes_per_update", 1)))
         for index in range(settings["episodes_per_epoch"]):
-            optimizer.zero_grad(set_to_none=True)
+            if index % episodes_per_update == 0:
+                optimizer.zero_grad(set_to_none=True)
             context = torch.autocast(device_type="cuda", dtype=torch.float16) if amp else nullcontext()
             with context:
-                logits, labels, loss, _ = score_episode(model, train, sampler.sample(), device, config.get("head", {}))
+                episode = sampler.sample()
+                logits, labels, loss, _, sample_global = score_episode(
+                    model, train, episode, device, config.get("head", {}), return_embeddings=True)
+                if model.aux_classifier is not None:
+                    targets = torch.tensor([train_class_ids[train.by_id[vid]["class_key"]]
+                                            for vid in episode["support"] + episode["query"]],
+                                           dtype=torch.long, device=device)
+                    loss = loss + settings.get("auxiliary_ce_weight", 0.2) * F.cross_entropy(
+                        model.aux_classifier(sample_global), targets)
             if not torch.isfinite(loss):
                 raise FloatingPointError(f"Nonfinite training loss at epoch {epoch}, episode {index}")
-            scaler.scale(loss).backward()
-            scaler.unscale_(optimizer)
-            gradients_finite = all(
-                parameter.grad is None or torch.isfinite(parameter.grad).all()
-                for parameter in model.parameters()
-            )
-            if not gradients_finite:
-                # AMP can overflow gradients while the forward loss remains finite.
-                # Skip this update; GradScaler will reduce its scale on update().
-                optimizer.zero_grad(set_to_none=True)
+            group_size = min(episodes_per_update,
+                             settings["episodes_per_epoch"] - (index // episodes_per_update) * episodes_per_update)
+            scaler.scale(loss / group_size).backward()
+            update_now = ((index + 1) % episodes_per_update == 0 or
+                          index + 1 == settings["episodes_per_epoch"])
+            if update_now:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), settings["grad_clip"], error_if_nonfinite=False)
+                scaler.step(optimizer)
                 scaler.update()
-                if (index + 1) % settings.get("log_every", 100) == 0 or index == 0:
-                    print(f"epoch {epoch + 1}, episode {index + 1}: non-finite gradients; "
-                          "skipped optimizer step", flush=True)
-                continue
-            torch.nn.utils.clip_grad_norm_(model.parameters(), settings["grad_clip"], error_if_nonfinite=False)
-            scaler.step(optimizer)
-            scaler.update()
             loss_sum += loss.item()
             accuracy_sum += (logits.argmax(-1) == labels).float().mean().item()
             if (index + 1) % settings.get("log_every", 100) == 0 or index == 0:
@@ -255,6 +261,8 @@ def evaluate_main(argv=None):
     device = choose_device(args.device)
     model = build_model(config).to(device)
     model.load_state_dict(state["model"])
+    # The supervised train-classifier is auxiliary only and is removed at meta-test.
+    model.aux_classifier = None
     dataset = dataset_for(config, args.split)
     if dataset.config_hash != state["preprocessing_hash"]:
         raise ValueError("Checkpoint and evaluation preprocessing differ")

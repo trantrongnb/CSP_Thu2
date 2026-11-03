@@ -23,7 +23,8 @@ def letterbox(rgb, size=256):
     return canvas, np.array([nw / w, nh / h, left, top], dtype=np.float32)
 
 
-def read_video(path, target_frames=16, canvas_size=256, is_mirrored=False):
+def read_video(path, target_frames=16, canvas_size=256, is_mirrored=False, flow_gap=1,
+               flow_pairing="midpoint_raw"):
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
         raise ValueError(f"Cannot open video: {path}")
@@ -46,7 +47,24 @@ def read_video(path, target_frames=16, canvas_size=256, is_mirrored=False):
         rgb.append(canvas)
         transforms.append(transform)
         sizes.append([frame.shape[1], frame.shape[0]])
-    return {"rgb": np.stack(rgb), "sampled_frame_ids": ids,
+    if flow_pairing not in {"midpoint_raw", "sampled_frames"}:
+        raise ValueError("flow_pairing must be midpoint_raw or sampled_frames")
+    flow_pairs = []
+    for left, right, is_valid in zip(ids[:-1], ids[1:], valid):
+        if not is_valid or flow_pairing == "sampled_frames":
+            flow_pairs.append(np.zeros((2, canvas_size, canvas_size, 3), dtype=np.uint8))
+            continue
+        midpoint = (int(left) + int(right)) // 2
+        first_id = max(int(left), midpoint - flow_gap // 2)
+        second_id = min(int(right), first_id + flow_gap)
+        pair = []
+        for index in (first_id, second_id):
+            frame = frames[index]
+            if is_mirrored:
+                frame = frame[:, ::-1].copy()
+            pair.append(letterbox(frame, canvas_size)[0])
+        flow_pairs.append(np.stack(pair))
+    return {"rgb": np.stack(rgb), "flow_rgb": np.stack(flow_pairs), "sampled_frame_ids": ids,
             "transition_valid": valid, "original_fps": np.array(fps),
             "original_size": np.asarray(sizes), "letterbox_transform": np.stack(transforms),
             "is_mirrored": np.array(is_mirrored), "decoded_frame_count": np.array(len(frames))}

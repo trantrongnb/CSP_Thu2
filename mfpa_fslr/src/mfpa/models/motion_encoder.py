@@ -13,8 +13,8 @@ class MotionEncoder(nn.Module):
             norm = nn.GroupNorm(8, width) if normalization == "group" else nn.BatchNorm2d(width)
             layers += [nn.Conv2d(channels, width, 3, 2, 1), norm, nn.GELU()]
             channels = width
-        self.net = nn.Sequential(*layers, nn.AdaptiveAvgPool2d(1), nn.Flatten(),
-                                 nn.Linear(128, dimension))
+        self.net = nn.Sequential(*layers, nn.AdaptiveAvgPool2d((2, 2)), nn.Flatten(),
+                                 nn.Linear(512, dimension))
 
     def forward(self, flow):
         b, r, t, c, h, w = flow.shape
