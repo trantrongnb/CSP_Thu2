@@ -12,16 +12,16 @@ class FarnebackFlow:
                                           cv2.cvtColor(second, cv2.COLOR_RGB2GRAY), None, **self.options)
 
 
-class RaftSmallFlow:
-    """Frozen torchvision RAFT-Small; weights downloaded once by torchvision."""
+class RaftLargeFlow:
+    """Frozen torchvision RAFT-Large; weights downloaded once by torchvision."""
 
-    def __init__(self, device="cpu", num_flow_updates=12):
+    def __init__(self, device="cuda", num_flow_updates=12):
         import torch
-        from torchvision.models.optical_flow import raft_small, Raft_Small_Weights
+        from torchvision.models.optical_flow import raft_large, Raft_Large_Weights
         self.device, self.updates = torch.device(device), num_flow_updates
-        weights = Raft_Small_Weights.C_T_V2
+        weights = Raft_Large_Weights.C_T_SKHT_V2
         self.transforms = weights.transforms()
-        self.model = raft_small(weights=weights).to(self.device).eval().requires_grad_(False)
+        self.model = raft_large(weights=weights).to(self.device).eval().requires_grad_(False)
 
     def __call__(self, first, second):
         import torch

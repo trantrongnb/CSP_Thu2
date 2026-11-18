@@ -183,9 +183,9 @@ estimator/version/cấu hình và 40 mouth indices theo thứ tự cố định.
 thư viện estimator, video hoặc mirror flag, dùng cache directory mới. Cache được
 ghi atomically và có thể tiếp tục chạy khi đã xử lý một phần.
 
-Để dùng frozen RAFT-Small, sao chép `configs/preprocess.yaml`, đặt
-`flow_estimator: raft_small`, chạy `--device cuda` và `--output data/processed_raft`.
-Torchvision tải weights `C_T_V2` vào `.torch_hub` trong cache output ở lần đầu.
+Để dùng frozen RAFT-Large, sao chép `configs/preprocess.yaml`, đặt
+`flow_estimator: raft_large`, chạy `--device cuda` và `--output data/processed_raft_large`.
+Torchvision tải weights `C_T_SKHT_V2` vào `.torch_hub` trong cache output ở lần đầu.
 Đổi `data.cache_dir` trong cấu hình train sang cache này. Không backprop qua RAFT.
 
 Toàn video thiếu vùng hợp lệ sẽ bị báo lỗi rõ ở Dataset, không tự loại video để
@@ -222,10 +222,11 @@ mfpa-train --config configs/train_5w1s.yaml \
 Tạo test episodes một lần cho mỗi N/K/seed, dùng lại cho **mọi phương pháp**:
 
 ```bash
-mfpa-episodes --metadata data/metadata.csv --cache-dir data/processed_farneback \
+# On this workspace server: use the launcher; after pip install, mfpa-* also works.
+bash scripts/run_conda.sh episodes --metadata data/metadata.csv --cache-dir data/processed_farneback \
   --split test --n-way 5 --k-shot 1 --queries-per-class 5 \
   --count 1000 --seed 42 --output data/episodes/test_5w1s_seed42.json
-mfpa-evaluate --checkpoint outputs/A5_5w1s_seed42/best.pt \
+bash scripts/run_conda.sh evaluate --checkpoint outputs/A5_5w1s_seed42/best.pt \
   --episodes data/episodes/test_5w1s_seed42.json --output outputs/A5_5w1s_seed42/test.json
 ```
 
@@ -319,5 +320,5 @@ outputs/             artifacts do các lệnh tạo, được gitignore
 ```
 
 API backend tham khảo: [MediaPipe Holistic](https://github.com/google-ai-edge/mediapipe/blob/master/docs/solutions/holistic.md),
-[Torchvision RAFT-Small](https://docs.pytorch.org/vision/stable/models/generated/torchvision.models.optical_flow.raft_small.html),
+[Torchvision RAFT-Large](https://docs.pytorch.org/vision/stable/models/generated/torchvision.models.optical_flow.raft_large.html),
 [RAFT preprocessing](https://docs.pytorch.org/vision/main/auto_examples/others/plot_optical_flow.html).

@@ -1,7 +1,7 @@
-target_frames: 16
+target_frames: 8
 canvas_size: 256
 roi_size: 64
-flow_estimator: farneback  # Optional: raft_small; use a separate cache directory.
+flow_estimator: farneback  # Optional: raft_large; use a separate cache directory.
 flow_representation: roi_pixel_displacement
 flow_scale: 20.0  # Fixed initial scale, tune on train/val only, never per-video.
 flow_clip: 5.0

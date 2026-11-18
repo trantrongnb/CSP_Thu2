@@ -97,6 +97,25 @@ def evaluate(model, dataset, document, device, head):
     return result
 
 
+@torch.inference_mode()
+def profile_episode_flops(model, dataset, document, device, head):
+    """Profile one fixed episode and return its operator-level FLOP count.
+
+    Episodes use a fixed N/K/query protocol, so one episode is representative
+    of the model work for every episode in the same evaluation document.  This
+    intentionally excludes offline preprocessing and cache-file reads.
+    """
+    activities = [torch.profiler.ProfilerActivity.CPU]
+    if device.type == "cuda":
+        activities.append(torch.profiler.ProfilerActivity.CUDA)
+    model.eval()
+    sync(device)
+    with torch.profiler.profile(activities=activities, with_flops=True) as profiler:
+        score_episode(model, dataset, document["episodes"][0], device, head)
+        sync(device)
+    return int(sum(event.flops for event in profiler.key_averages() if event.flops))
+
+
 def provenance():
     dependencies = {}
     for package in ("torch", "torchvision", "numpy", "mediapipe", "opencv-python-headless", "mfpa-fslr"):
@@ -244,6 +263,8 @@ def evaluate_main(argv=None):
     parser.add_argument("--metadata", type=Path)
     parser.add_argument("--cache-dir", type=Path)
     parser.add_argument("--split", choices=["val", "test"], default="test")
+    parser.add_argument("--profile-flops", action="store_true",
+                        help="Profile FLOPs for one evaluation episode (slower; does not train or modify weights)")
     args = parser.parse_args(argv)
     state = torch.load(args.checkpoint, map_location="cpu", weights_only=True)
     config = state["config"]
@@ -262,6 +283,10 @@ def evaluate_main(argv=None):
         raise ValueError("Evaluation contains meta-training classes")
     document = load_episodes(args.episodes, dataset)
     result = evaluate(model, dataset, document, device, config.get("head", {}))
+    if args.profile_flops:
+        flops = profile_episode_flops(model, dataset, document, device, config.get("head", {}))
+        result.update(flops_per_episode_profiled=flops,
+                      flops_per_query_video_profiled=flops / (document["n_way"] * document["queries_per_class"]))
     # Cached model timing above excludes optical flow/detection; report measured offline cost separately.
     preprocessing_cost = []
     for row in dataset.rows:

@@ -27,6 +27,34 @@ from mfpa.datasets.feature_dataset import read_metadata
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
 
 
+def ensure_unique_video_ids(rows: list[dict[str, str]]) -> bool:
+    """Suffix colliding/unsafe generated IDs with a stable hash of source path."""
+    counts = {}
+    for row in rows:
+        counts[row.get("video_id", "")] = counts.get(row.get("video_id", ""), 0) + 1
+    changed = False
+    used = set()
+    for row_index, row in enumerate(rows):
+        video_id = row.get("video_id", "")
+        unsafe = not video_id or Path(video_id).name != video_id or video_id in {".", ".."}
+        if counts[video_id] > 1 or unsafe or video_id in used:
+            path_key = str(Path(row["path"]).resolve())
+            digest = hashlib.sha256(f"{path_key}\0{row_index}".encode("utf-8")).hexdigest()
+            suffix = digest[:12]
+            base = video_id if not unsafe else Path(path_key).stem
+            base = re.sub(r"[^A-Za-z0-9_.-]+", "_", base).strip("._") or "video"
+            candidate = f"{base}_{suffix}"
+            length = 16
+            while candidate in used:
+                candidate = f"{base}_{digest[:length]}"
+                length += 4
+            row["video_id"] = candidate
+            video_id = candidate
+            changed = True
+        used.add(video_id)
+    return changed
+
+
 def build_metadata_rows(dataset_root: Path, seed: int = 42) -> list[dict[str, str]]:
     """Create alphabetically split, class-disjoint metadata from gloss folders."""
     dataset_root = dataset_root.resolve()
@@ -56,6 +84,7 @@ def build_metadata_rows(dataset_root: Path, seed: int = 42) -> list[dict[str, st
             rows.append({"video_id": f"{safe_gloss}_{safe_stem}", "path": str(video.resolve()),
                          "gloss": gloss, "class_id": class_ids[gloss], "language": "ASL",
                          "signer_id": "", "split": split_by_gloss[gloss], "is_mirrored": "false"})
+    ensure_unique_video_ids(rows)
     return rows
 
 
@@ -85,7 +114,7 @@ def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--dataset-root", type=Path,
-                        default=Path(__file__).resolve().parents[2] / "WLASL")
+                        default=Path(__file__).resolve().parents[2] / "Data_sign")
     parser.add_argument("--preprocess-config", type=Path,
                         default=Path(__file__).resolve().parents[1] / "configs/preprocess.yaml")
     parser.add_argument("--workers", type=int, default=4)
@@ -115,13 +144,17 @@ def main(argv=None) -> None:
         print(f"Created metadata for {len(rows)} videos in {time.perf_counter() - started:.1f}s", flush=True)
     else:
         # Refuse silently using metadata created from a different raw dataset.
-        rows = read_metadata(prep_metadata)
+        with prep_metadata.open(newline="", encoding="utf-8-sig") as handle:
+            rows = list(csv.DictReader(handle))
         listed = {Path(row["path"]).resolve() for row in rows}
         absent = [path for path in listed if not path.is_file()]
         if absent:
             raise FileNotFoundError(f"Metadata references missing source videos, e.g. {absent[0]}")
+        if ensure_unique_video_ids(rows):
+            write_metadata_csv(rows, prep_metadata)
+            print("Repaired colliding generated video IDs using source-path hashes", flush=True)
+        read_metadata(prep_metadata)
 
-    read_metadata(prep_metadata)
     cache_dir.mkdir(parents=True, exist_ok=True)
     stage(2, "Preprocess video frames and landmarks")
     preprocess_command = [sys.executable, "-m", "mfpa.preprocessing.pipeline",
@@ -135,7 +168,7 @@ def main(argv=None) -> None:
     metadata_hash = sha256(prep_metadata)
     manifest_path = cache_dir / "preprocessing_manifest.json"
     manifest = json.loads(manifest_path.read_text())
-    audit_key = f"{metadata_hash}_{manifest['config_hash']}"
+    audit_key = f"{metadata_hash}_{manifest['config_hash']}_stable_model_identity_v2"
     audit_path = package_dir / "outputs/wlasl_training_readiness" / f"report_{audit_key}.json"
     audit_path.parent.mkdir(parents=True, exist_ok=True)
     stage(3, "Audit prepared video caches")

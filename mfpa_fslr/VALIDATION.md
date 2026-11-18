@@ -21,7 +21,7 @@ Torchvision 0.29.1+cpu, OpenCV 4.11.0 và MediaPipe 0.10.21.
 | MediaPipe backend | Xử lý clip trống 4 frames, padding tới 16; cache masks/flow bằng 0 |
 | Visualization | Xuất overlay PNG từ clip/cache trên |
 | Farnebäck | Synthetic translation +3 pixel X, median flow đúng hướng và biên độ trong tolerance |
-| RAFT-Small | Official C_T_V2 weights, hai frames 128×128; output finite, eval mode và frozen parameters |
+| RAFT-Large | Official C_T_SKHT_V2 weights, hai frames 128×128; output finite, eval mode và frozen parameters |
 
 Các artifacts trong workspace:
 

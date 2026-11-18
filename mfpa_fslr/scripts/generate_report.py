@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
-"""Generate a Markdown experiment report from MFPA-FSLR output artifacts."""
+"""Generate Markdown and DOCX experiment reports from MFPA-FSLR output artifacts."""
 
 import argparse
 import csv
 import hashlib
 import json
 from pathlib import Path
+import re
+from zipfile import ZIP_DEFLATED, ZipFile
+from lxml import etree
+
+from docx import Document
+from docx.shared import Pt
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -169,6 +175,114 @@ def eval_episode_count(config, result):
     return config.get("evaluation", {}).get("val_episodes")
 
 
+def table_cells(line):
+    """Split a Markdown table row while retaining escaped literal pipes."""
+    cells = re.split(r"(?<!\\)\|", line.strip().strip("|"))
+    return [cell.strip().replace("\\|", "|") for cell in cells]
+
+
+def table_separator(line):
+    cells = table_cells(line)
+    return bool(cells) and all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells)
+
+
+def write_docx(lines, output, template):
+    """Replace placeholder text in the DOCX XML, preserving every other part."""
+    if not template.is_file():
+        raise FileNotFoundError(f"DOCX template not found: {template}")
+    document = Document(template)
+    template_tables = document.tables
+
+    # Extract generated values by report section; preserve the template's rows,
+    # column widths, shading, borders, page settings, and footer.
+    markdown_tables = []
+    index = 0
+    current_section = 0
+    while index < len(lines):
+        line = lines[index]
+        heading = re.match(r"##\s+(\d+)\.", line)
+        if heading:
+            current_section = int(heading.group(1))
+        if line.startswith("|") and index + 1 < len(lines) and table_separator(lines[index + 1]):
+            rows = [table_cells(line)]
+            index += 2
+            while index < len(lines) and lines[index].startswith("|"):
+                rows.append(table_cells(lines[index]))
+                index += 1
+            markdown_tables.append((current_section, rows))
+            continue
+        index += 1
+
+    replacements = {}
+
+    section_tables = {section: rows for section, rows in markdown_tables}
+    for table_index, section in ((0, 1), (1, 2), (3, 4)):
+        if table_index >= len(template_tables) or section not in section_tables:
+            continue
+        table = template_tables[table_index]
+        rows = section_tables[section][1:]
+        values = {row[0]: row[1] for row in rows if len(row) > 1}
+        for row in table.rows:
+            if len(row.cells) < 2:
+                continue
+            label = row.cells[0].text.strip()
+            if label in values and "." in row.cells[1].text:
+                value = values[label]
+                # Keep units already printed after the dotted placeholder.
+                suffix = " frame" if " frame" in row.cells[1].text else " episode" if " episode" in row.cells[1].text else " M" if row.cells[1].text.rstrip().endswith(" M") else ""
+                value = value.removesuffix(suffix).strip() if suffix else value
+                replacements[row.cells[1].text] = value
+
+    # Fill the four existing result rows in place. Never add or delete rows.
+    if len(template_tables) > 2 and 3 in section_tables:
+        result_rows = section_tables[3][1:]
+        table = template_tables[2]
+        for row_index, row in enumerate(table.rows[1:]):
+            if row_index >= len(result_rows):
+                continue
+            values = result_rows[row_index]
+            for col, cell in enumerate(row.cells):
+                if col < len(values) and "." in cell.text:
+                    value = values[col]
+                    if col == 1:
+                        value = value.removesuffix("%").strip()
+                    elif col == 2:
+                        value = value.replace(" điểm %", "").strip()
+                    replacements[cell.text] = value
+    # Preserve explanatory paragraph text and fill each existing dotted note
+    # line with the corresponding generated note, leaving remaining lines intact.
+    notes = [line[2:] for line in lines if line.startswith("- ")]
+    note_index = 0
+    for paragraph in document.paragraphs:
+        if paragraph.text.startswith(".....") and note_index < len(notes):
+            replacements[paragraph.text] = notes[note_index]
+            note_index += 1
+
+    # Replace complete text per cell/paragraph in the XML tree while preserving
+    # all package parts and the run properties, table formatting, and sections.
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    text_key = f"{{{ns['w']}}}t"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with ZipFile(template) as source, ZipFile(output, "w", ZIP_DEFLATED) as target:
+        for item in source.infolist():
+            payload = source.read(item.filename)
+            if item.filename == "word/document.xml":
+                root = etree.fromstring(payload)
+                for container in root.xpath(".//w:tc | .//w:p", namespaces=ns):
+                    text_nodes = container.xpath(".//w:t", namespaces=ns)
+                    current = "".join(node.text or "" for node in text_nodes)
+                    replacement = replacements.get(current)
+                    if replacement is None or not text_nodes:
+                        continue
+                    text_nodes[0].text = replacement
+                    for node in text_nodes[1:]:
+                        node.text = ""
+                    if replacement[:1].isspace() or replacement[-1:].isspace():
+                        text_nodes[0].set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+                payload = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+            target.writestr(item, payload)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--outputs", type=Path, action="append",
@@ -176,7 +290,12 @@ def main():
     parser.add_argument("--outputs-root", type=Path, default=ROOT,
                         help="Directory under which all outputs* directories are discovered")
     parser.add_argument("--output", type=Path, default=ROOT.parent / "README.md",
-                        help="Markdown destination (default: repository-root REPORT.md)")
+                        help="Markdown destination (default: repository-root README.md)")
+    parser.add_argument("--docx-output", type=Path, default=ROOT.parent / "REPORT.docx",
+                        help="DOCX destination (default: repository-root REPORT.docx)")
+    parser.add_argument("--docx-template", type=Path,
+                        default=ROOT.parent / "Mau_bao_cao_ket_qua_training.docx",
+                        help="DOCX layout template")
     args = parser.parse_args()
 
     if args.outputs:
@@ -319,6 +438,8 @@ def main():
     peak_bytes = [r["peak_gpu_memory_bytes"] for r in eval_results if r.get("peak_gpu_memory_bytes")]
     latencies = [r["seconds_per_episode_including_cache_io"] for r in eval_results
                  if r.get("seconds_per_episode_including_cache_io") is not None]
+    flops = [r["flops_per_episode_profiled"] for r in eval_results
+             if r.get("flops_per_episode_profiled") is not None]
 
     def million(values):
         return f"{values[-1] / 1e6:.3f} M" if values else "chưa được lưu trong artifacts"
@@ -326,7 +447,8 @@ def main():
     lines.extend([
         f"| Tổng số tham số | {million(parameter_counts)} |",
         f"| Số tham số được huấn luyện | {million(trainable_counts)} |",
-        "| FLOPs | Chưa có phép đo trong artifacts |",
+        (f"| FLOPs | {flops[-1] / 1e9:.3f} GFLOPs/episode (torch profiler; không gồm preprocessing) |"
+         if flops else "| FLOPs | Chưa có phép đo trong artifacts |"),
         (f"| Inference latency | {latencies[-1] * 1000:.2f} ms/episode (có cache I/O; "
          "không phải ms/video) |" if latencies else "| Inference latency | Chưa có phép đo trong artifacts |"),
         (f"| Peak inference VRAM | {peak_bytes[-1] / (1024 ** 3):.3f} GB |" if peak_bytes
@@ -357,6 +479,17 @@ def main():
     lines.extend([
         "- Đây là protocol WLASL tự xây dựng của workspace; không so sánh trực tiếp với paper nếu protocol, preprocessing và test episodes khác.",
         "",
+        "## 6. Bổ sung metric checkpoint (không train lại)",
+        "",
+        "Đánh giá `best.pt` chỉ chạy inference. Lệnh dưới tạo accuracy/CI test, số tham số, latency, peak VRAM và FLOPs cho một episode đại diện:",
+        "",
+        "```bash",
+        "bash scripts/run_conda.sh evaluate --checkpoint <run>/best.pt --episodes <test_episodes.json> \\",
+        "  --output <run>/test_metrics.json --device cuda --profile-flops",
+        "```",
+        "",
+        "Sau đó chạy lại `python scripts/generate_report.py` để điền các số đã lưu trong `test_metrics.json`. FLOPs là tổng operator FLOPs từ `torch.profiler`, không gồm preprocessing; latency gồm cache I/O.",
+        "",
         "---",
         "",
         f"Được tạo tự động từ {len(outputs_roots)} thư mục outputs*, config.yaml, `metrics.jsonl` và evaluation JSON.",
@@ -365,8 +498,9 @@ def main():
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text("\n".join(lines), encoding="utf-8")
+    write_docx(lines, args.docx_output, args.docx_template)
     print(f"Scanned {len(outputs_roots)} outputs* director(ies); generated {args.output} "
-          f"from {len(runs)} training run(s) and {evaluation_rows} result row(s).")
+          f"and {args.docx_output} from {len(runs)} training run(s) and {evaluation_rows} result row(s).")
 
 
 if __name__ == "__main__":

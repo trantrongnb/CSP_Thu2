@@ -12,7 +12,7 @@ import numpy as np
 import yaml
 
 from .landmarks import MOUTH_INDICES, extract_landmarks
-from .optical_flow import FarnebackFlow, RaftSmallFlow
+from .optical_flow import FarnebackFlow, RaftLargeFlow
 from .roi import landmark_box, union_box, valid_fraction, crop_flow
 from .video_frames import read_video
 from ..datasets.feature_dataset import read_metadata

@@ -3,9 +3,11 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
-mfpa_fslr/data/
+mfpa_fslr/data*/
 *.pt
 /WLASL.zip
 /WLASL/
 .vscode/
+Data_sign/
+localization-baseline/
 Mau_bao_cao_ket_qua_training.docx

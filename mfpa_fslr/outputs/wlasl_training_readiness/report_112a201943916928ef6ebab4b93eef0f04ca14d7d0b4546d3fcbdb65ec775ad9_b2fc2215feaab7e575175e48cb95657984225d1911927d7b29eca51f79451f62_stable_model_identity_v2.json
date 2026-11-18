@@ -1,0 +1,270 @@
+{
+  "checked_videos": 12635,
+  "cache_errors": [],
+  "all_invalid_by_variant": {
+    "A0": [],
+    "A1": [],
+    "A5": [],
+    "common": []
+  },
+  "duplicate_source_groups": [
+    {
+      "source_hash": "962665fdd820d7787f4ef844abba68a9fbbb43213579b034417a6fcbeff34513",
+      "videos": [
+        {
+          "video_id": "A_n_0010011",
+          "class_key": "ASL:2",
+          "gloss": "Ăn"
+        },
+        {
+          "video_id": "A_n_0010012",
+          "class_key": "ASL:2",
+          "gloss": "Ăn"
+        }
+      ]
+    },
+    {
+      "source_hash": "2f2355ed5f01935938d2537683b0f56777d02e80a4974203aef2ad09af2ea832",
+      "videos": [
+        {
+          "video_id": "Ba_n_tay_0010079",
+          "class_key": "ASL:6",
+          "gloss": "Bàn_tay"
+        },
+        {
+          "video_id": "Ba_n_tay_0010080",
+          "class_key": "ASL:6",
+          "gloss": "Bàn_tay"
+        }
+      ]
+    },
+    {
+      "source_hash": "80d8787f17f4544317f24f260e18d54dce493e019c2dd06d54fcf1038d50f967",
+      "videos": [
+        {
+          "video_id": "Khu_ca_ch_ly_0010061",
+          "class_key": "ASL:46",
+          "gloss": "Khu_cách_ly"
+        },
+        {
+          "video_id": "Khu_ca_ch_ly_0010062",
+          "class_key": "ASL:46",
+          "gloss": "Khu_cách_ly"
+        }
+      ]
+    },
+    {
+      "source_hash": "8c63ec5962a50e948ced6c45140c7a1c3e2ccfa6f166001e8a20ea71231371b7",
+      "videos": [
+        {
+          "video_id": "Mua_0010014",
+          "class_key": "ASL:50",
+          "gloss": "Mua"
+        },
+        {
+          "video_id": "Mua_0010015",
+          "class_key": "ASL:50",
+          "gloss": "Mua"
+        }
+      ]
+    },
+    {
+      "source_hash": "d464222603b8d63b02b3248b71b604612b3d05a56be743cf92d4633117aa41f0",
+      "videos": [
+        {
+          "video_id": "To_i_0010014_94263b41bbb9",
+          "class_key": "ASL:80",
+          "gloss": "Tôi"
+        },
+        {
+          "video_id": "To_i_0010015_fae54815c382",
+          "class_key": "ASL:80",
+          "gloss": "Tôi"
+        }
+      ]
+    },
+    {
+      "source_hash": "c47df7c52879fb5db894ef432a4e90e3afafd7e8dca28089987afe0749941f90",
+      "videos": [
+        {
+          "video_id": "To_i_0010086_39b6358d77f5",
+          "class_key": "ASL:81",
+          "gloss": "Tối"
+        },
+        {
+          "video_id": "Tru_a_0010093",
+          "class_key": "ASL:82",
+          "gloss": "Trưa"
+        }
+      ]
+    },
+    {
+      "source_hash": "25b834337da6e0e3ab6be31c81a59d2a990f1048425329d8733338d9888082c3",
+      "videos": [
+        {
+          "video_id": "To_i_0010087_56ac1fdbd7ae",
+          "class_key": "ASL:81",
+          "gloss": "Tối"
+        },
+        {
+          "video_id": "Tru_a_0010095",
+          "class_key": "ASL:82",
+          "gloss": "Trưa"
+        }
+      ]
+    },
+    {
+      "source_hash": "9604d2e512cd0a065938758d30f500b180ad04adb92328e9e694ac21990c659f",
+      "videos": [
+        {
+          "video_id": "To_i_0010088_5a1ad6ad4398",
+          "class_key": "ASL:81",
+          "gloss": "Tối"
+        },
+        {
+          "video_id": "Tru_a_0010097",
+          "class_key": "ASL:82",
+          "gloss": "Trưa"
+        }
+      ]
+    },
+    {
+      "source_hash": "cdf9e5ba7268a9de88e6d22e24f4a3f239867c9fcbe9b3dbf6b3dda06432718c",
+      "videos": [
+        {
+          "video_id": "To_i_0010089_e1a46feff11d",
+          "class_key": "ASL:81",
+          "gloss": "Tối"
+        },
+        {
+          "video_id": "Tru_a_0010098",
+          "class_key": "ASL:82",
+          "gloss": "Trưa"
+        }
+      ]
+    },
+    {
+      "source_hash": "eac596a7b7b6c2d1560acb8e84a08a59780376f54a06e47c2894ae9f4e03fb03",
+      "videos": [
+        {
+          "video_id": "To_i_0010090_d9a14e992de4",
+          "class_key": "ASL:81",
+          "gloss": "Tối"
+        },
+        {
+          "video_id": "Tru_a_0010091",
+          "class_key": "ASL:82",
+          "gloss": "Trưa"
+        }
+      ]
+    }
+  ],
+  "cross_class_duplicate_source_groups": [
+    {
+      "source_hash": "c47df7c52879fb5db894ef432a4e90e3afafd7e8dca28089987afe0749941f90",
+      "videos": [
+        {
+          "video_id": "To_i_0010086_39b6358d77f5",
+          "class_key": "ASL:81",
+          "gloss": "Tối"
+        },
+        {
+          "video_id": "Tru_a_0010093",
+          "class_key": "ASL:82",
+          "gloss": "Trưa"
+        }
+      ]
+    },
+    {
+      "source_hash": "25b834337da6e0e3ab6be31c81a59d2a990f1048425329d8733338d9888082c3",
+      "videos": [
+        {
+          "video_id": "To_i_0010087_56ac1fdbd7ae",
+          "class_key": "ASL:81",
+          "gloss": "Tối"
+        },
+        {
+          "video_id": "Tru_a_0010095",
+          "class_key": "ASL:82",
+          "gloss": "Trưa"
+        }
+      ]
+    },
+    {
+      "source_hash": "9604d2e512cd0a065938758d30f500b180ad04adb92328e9e694ac21990c659f",
+      "videos": [
+        {
+          "video_id": "To_i_0010088_5a1ad6ad4398",
+          "class_key": "ASL:81",
+          "gloss": "Tối"
+        },
+        {
+          "video_id": "Tru_a_0010097",
+          "class_key": "ASL:82",
+          "gloss": "Trưa"
+        }
+      ]
+    },
+    {
+      "source_hash": "cdf9e5ba7268a9de88e6d22e24f4a3f239867c9fcbe9b3dbf6b3dda06432718c",
+      "videos": [
+        {
+          "video_id": "To_i_0010089_e1a46feff11d",
+          "class_key": "ASL:81",
+          "gloss": "Tối"
+        },
+        {
+          "video_id": "Tru_a_0010098",
+          "class_key": "ASL:82",
+          "gloss": "Trưa"
+        }
+      ]
+    },
+    {
+      "source_hash": "eac596a7b7b6c2d1560acb8e84a08a59780376f54a06e47c2894ae9f4e03fb03",
+      "videos": [
+        {
+          "video_id": "To_i_0010090_d9a14e992de4",
+          "class_key": "ASL:81",
+          "gloss": "Tối"
+        },
+        {
+          "video_id": "Tru_a_0010091",
+          "class_key": "ASL:82",
+          "gloss": "Trưa"
+        }
+      ]
+    }
+  ],
+  "input_metadata_sha256": "112a201943916928ef6ebab4b93eef0f04ca14d7d0b4546d3fcbdb65ec775ad9",
+  "preprocessing_config_hash": "b2fc2215feaab7e575175e48cb95657984225d1911927d7b29eca51f79451f62",
+  "manifest_matches_current_config_environment": false,
+  "metadata_split_counts": {
+    "train": 7706,
+    "val": 2713,
+    "test": 2216
+  },
+  "eligibility": {
+    "A0": {
+      "usable_videos": 12635,
+      "classes_eligible_1shot_Q5": 100,
+      "classes_eligible_5shot_Q5": 100
+    },
+    "A1": {
+      "usable_videos": 12635,
+      "classes_eligible_1shot_Q5": 100,
+      "classes_eligible_5shot_Q5": 100
+    },
+    "A5": {
+      "usable_videos": 12635,
+      "classes_eligible_1shot_Q5": 100,
+      "classes_eligible_5shot_Q5": 100
+    },
+    "common": {
+      "usable_videos": 12635,
+      "classes_eligible_1shot_Q5": 100,
+      "classes_eligible_5shot_Q5": 100
+    }
+  },
+  "audit_seconds": 38.07564859098056
+}
