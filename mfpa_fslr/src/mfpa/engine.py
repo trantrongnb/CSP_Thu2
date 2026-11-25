@@ -14,11 +14,9 @@ import yaml
 from .datasets.feature_dataset import FeatureDataset
 from .datasets.episode_sampler import EpisodeSampler, load_episodes
 from .datasets.collate import encode_episode
-from .models import MFPAFSLR, part_proto_logits
-from .models.prototype_head import RelationNetwork
+from .models import MFPAFSLR, part_proto_logits, RelationNetwork
 from .utils.seed import seed_everything
 from .utils.metrics import episodic_accuracy_summary
-
 
 def build_model(config):
     model = MFPAFSLR(**config["model"])
@@ -38,11 +36,13 @@ def score_episode(model, dataset, episode, device, head):
     options["tau_a"] = options.pop("tau_alpha", 1.0)
     options["adaptive"] = model.variant == "A5"
     matcher = options.pop("matcher", "euclidean")
-    logits, alpha = part_proto_logits(support["global"], support["parts"], support["part_quality"],
-                                      query["global"], query["parts"], query["part_quality"],
-                                      matcher=matcher,
-                                      relation_network=getattr(model, "relation_network", None),
-                                      **options)
+    logits, alpha = part_proto_logits(
+        support["global"], support["parts"], support["part_quality"],
+        query["global"], query["parts"], query["part_quality"],
+        matcher=matcher,
+        relation_network=getattr(model, "relation_network", None),
+        **options
+    )
     loss = F.cross_entropy(logits, labels)
     return logits, labels, loss, alpha
 
@@ -201,7 +201,7 @@ def train_main(argv=None):
                     print(f"epoch {epoch + 1}, episode {index + 1}: non-finite gradients; "
                           "skipped optimizer step", flush=True)
                 continue
-            torch.nn.utils.clip_grad_norm_(model.parameters(), settings["grad_clip"], error_if_nonfinite=False)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), settings["grad_clip"], error_if_nonfinite=True)
             scaler.step(optimizer)
             scaler.update()
             loss_sum += loss.item()

@@ -6,12 +6,14 @@ from .motion_encoder import MotionEncoder
 from .structural_encoder import StructuralEncoder
 from .fusion import ReliabilityFusion
 from .temporal_pool import PartTemporalPool
+from .temporal_encoder import PartTemporalEncoder
 
 
 class MFPAFSLR(nn.Module):
     """A0: landmarks, A1: flow, A2: sum, A3-A5: reliability fusion."""
 
-    def __init__(self, dimension=128, variant="A5", normalization="group", regions=(0, 1, 2)):
+    def __init__(self, dimension=128, variant="A5", normalization="group", regions=(0, 1, 2),
+                 temporal_encoder="none"):
         super().__init__()
         if variant not in {f"A{i}" for i in range(6)}:
             raise ValueError("variant must be A0..A5")
@@ -21,6 +23,10 @@ class MFPAFSLR(nn.Module):
         self.motion = MotionEncoder(dimension, normalization)
         self.structure = StructuralEncoder(dimension)
         self.fusion = ReliabilityFusion(dimension)
+        if temporal_encoder not in {"none", "dilated_conv"}:
+            raise ValueError("temporal_encoder must be 'none' or 'dilated_conv'")
+        # Keep the default off so existing checkpoints/configurations remain compatible.
+        self.temporal = (PartTemporalEncoder(dimension) if temporal_encoder == "dilated_conv" else None)
         self.pool = PartTemporalPool(dimension)
         self.global_projection = nn.Sequential(nn.Linear(3 * dimension, dimension), nn.GELU(),
                                               nn.Linear(dimension, dimension))
@@ -60,6 +66,9 @@ class MFPAFSLR(nn.Module):
             step_quality = (structural_mask.float() + quality) / 2
         mask = mask & allowed
         features = torch.where(mask.unsqueeze(-1), features, 0.0)
+        # Learn local transition order before frame/transition attention pooling.
+        if self.temporal is not None:
+            features = self.temporal(features, mask)
         parts, attention = self.pool(features, mask)
         present = mask.any(dim=-1)
         part_quality = (step_quality * mask).sum(-1) / transitions.sum(-1, keepdim=True).clamp_min(1)

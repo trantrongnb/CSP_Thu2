@@ -3,6 +3,7 @@ import torch
 from torch.nn import functional as F
 
 from mfpa.models import part_proto_logits
+from mfpa.models.prototype_head import RelationNetwork
 
 
 def embeddings(k=1):
@@ -74,3 +75,15 @@ def test_zero_reliability_support_part_cannot_change_prototypes():
     after, changed_alpha = part_proto_logits(sg, sp, sq, qg, qp, qq)
     torch.testing.assert_close(before, after, rtol=0, atol=0)
     torch.testing.assert_close(alpha, changed_alpha, rtol=0, atol=0)
+
+
+def test_relation_matcher_scores_global_and_part_pairs():
+    values = embeddings()
+    relation_network = RelationNetwork(dimension=128)
+    logits, alpha = part_proto_logits(*values, matcher="relation",
+                                      relation_network=relation_network)
+    assert logits.shape == (25, 5)
+    assert alpha.shape == (5, 3)
+    assert torch.isfinite(logits).all()
+    logits.sum().backward()
+    assert all(parameter.grad is not None for parameter in relation_network.parameters())

@@ -1,0 +1,240 @@
+diff --git a/mfpa_fslr/src/mfpa/models/mfpa_model.py b/mfpa_fslr/src/mfpa/models/mfpa_model.py
+--- a/mfpa_fslr/src/mfpa/models/mfpa_model.py
++++ b/mfpa_fslr/src/mfpa/models/mfpa_model.py
+@@ -6,12 +6,14 @@
+ from .structural_encoder import StructuralEncoder
+ from .fusion import ReliabilityFusion
+ from .temporal_pool import PartTemporalPool
++from .temporal_encoder import PartTemporalEncoder
+ 
+ 
+ class MFPAFSLR(nn.Module):
+     """A0: landmarks, A1: flow, A2: sum, A3-A5: reliability fusion."""
+ 
+-    def __init__(self, dimension=128, variant="A5", normalization="group", regions=(0, 1, 2)):
++    def __init__(self, dimension=128, variant="A5", normalization="group", regions=(0, 1, 2),
++                 temporal_encoder="none"):
+         super().__init__()
+         if variant not in {f"A{i}" for i in range(6)}:
+             raise ValueError("variant must be A0..A5")
+@@ -21,6 +23,10 @@
+         self.motion = MotionEncoder(dimension, normalization)
+         self.structure = StructuralEncoder(dimension)
+         self.fusion = ReliabilityFusion(dimension)
++        if temporal_encoder not in {"none", "dilated_conv"}:
++            raise ValueError("temporal_encoder must be 'none' or 'dilated_conv'")
++        # Keep the default off so existing checkpoints/configurations remain compatible.
++        self.temporal = (PartTemporalEncoder(dimension) if temporal_encoder == "dilated_conv" else None)
+         self.pool = PartTemporalPool(dimension)
+         self.global_projection = nn.Sequential(nn.Linear(3 * dimension, dimension), nn.GELU(),
+                                               nn.Linear(dimension, dimension))
+@@ -60,6 +66,9 @@
+             step_quality = (structural_mask.float() + quality) / 2
+         mask = mask & allowed
+         features = torch.where(mask.unsqueeze(-1), features, 0.0)
++        # Learn local transition order before frame/transition attention pooling.
++        if self.temporal is not None:
++            features = self.temporal(features, mask)
+         parts, attention = self.pool(features, mask)
+         present = mask.any(dim=-1)
+         part_quality = (step_quality * mask).sum(-1) / transitions.sum(-1, keepdim=True).clamp_min(1)
+
+diff --git a/mfpa_fslr/src/mfpa/models/temporal_encoder.py b/mfpa_fslr/src/mfpa/models/temporal_encoder.py
+new file mode 100644
+--- /dev/null
++++ b/mfpa_fslr/src/mfpa/models/temporal_encoder.py
+@@ -0,0 +1,54 @@
++import torch
++from torch import nn
++from torch.nn import functional as F
++
++
++class _TemporalResidualBlock(nn.Module):
++    """Lightweight depthwise temporal convolution with a masked residual path."""
++
++    def __init__(self, dimension, dilation=1, dropout=0.1):
++        super().__init__()
++        self.depthwise = nn.Conv1d(
++            dimension, dimension, kernel_size=3, padding=dilation,
++            dilation=dilation, groups=dimension, bias=False,
++        )
++        self.expand = nn.Conv1d(dimension, 2 * dimension, kernel_size=1)
++        self.project = nn.Conv1d(dimension, dimension, kernel_size=1)
++        self.norm = nn.LayerNorm(dimension)
++        self.dropout = nn.Dropout(dropout)
++
++    def forward(self, features, mask):
++        batch, regions, steps, dimension = features.shape
++        x = features.reshape(batch * regions, steps, dimension)
++        valid = mask.reshape(batch * regions, steps).to(x.dtype)
++        h = (x * valid.unsqueeze(-1)).transpose(1, 2)
++        h = self.depthwise(h)
++        h = F.glu(self.expand(h), dim=1)
++        h = self.project(F.gelu(h)).transpose(1, 2)
++        h = self.norm(x + self.dropout(h))
++        h = h * valid.unsqueeze(-1)
++        return h.reshape(batch, regions, steps, dimension)
++
++
++class PartTemporalEncoder(nn.Module):
++    """Encodes short-range gesture order separately for each anatomical region.
++
++    Input/output are [B, R, T, D]. A shared encoder is used for both hands and
++    mouth to keep parameter count low. Dilations 1 and 2 yield a seven-step
++    receptive field while preserving the temporal length.
++    """
++
++    def __init__(self, dimension=128, dropout=0.1):
++        super().__init__()
++        self.blocks = nn.ModuleList([
++            _TemporalResidualBlock(dimension, dilation=1, dropout=dropout),
++            _TemporalResidualBlock(dimension, dilation=2, dropout=dropout),
++        ])
++
++    def forward(self, features, mask):
++        if features.ndim != 4 or mask.shape != features.shape[:3]:
++            raise ValueError("Expected features [B,R,T,D] and mask [B,R,T]")
++        x = features * mask.unsqueeze(-1).to(features.dtype)
++        for block in self.blocks:
++            x = block(x, mask)
++        return x
+
+diff --git a/mfpa_fslr/tests/test_temporal_encoder.py b/mfpa_fslr/tests/test_temporal_encoder.py
+new file mode 100644
+--- /dev/null
++++ b/mfpa_fslr/tests/test_temporal_encoder.py
+@@ -0,0 +1,28 @@
++import torch
++
++from mfpa.models.temporal_encoder import PartTemporalEncoder
++
++
++def test_temporal_encoder_shapes_masks_and_gradients():
++    torch.manual_seed(7)
++    encoder = PartTemporalEncoder(dimension=32, dropout=0.0)
++    features = torch.randn(2, 3, 15, 32, requires_grad=True)
++    mask = torch.ones(2, 3, 15, dtype=torch.bool)
++    mask[0, 1, -3:] = False
++    output = encoder(features, mask)
++    assert output.shape == features.shape
++    assert torch.isfinite(output).all()
++    assert torch.count_nonzero(output[0, 1, -3:]) == 0
++    output.square().mean().backward()
++    assert features.grad is not None and torch.isfinite(features.grad).all()
++    assert features.grad.abs().sum() > 0
++
++
++def test_temporal_encoder_uses_order_not_just_framewise_pooling():
++    torch.manual_seed(11)
++    encoder = PartTemporalEncoder(dimension=16, dropout=0.0).eval()
++    features = torch.randn(1, 3, 9, 16)
++    mask = torch.ones(1, 3, 9, dtype=torch.bool)
++    forward = encoder(features, mask)
++    reversed_order = encoder(features.flip(2), mask)
++    assert not torch.allclose(forward, reversed_order.flip(2), atol=1e-5, rtol=1e-5)
+
+diff --git a/mfpa_fslr/configs/train_wlasl_5w1s_temporal.yaml b/mfpa_fslr/configs/train_wlasl_5w1s_temporal.yaml
+new file mode 100644
+--- /dev/null
++++ b/mfpa_fslr/configs/train_wlasl_5w1s_temporal.yaml
+@@ -0,0 +1,36 @@
++# Local content-deduplicated protocol, shared class pool for 1-shot and 5-shot.
++seed: 42
++output_dir: outputs/WLASL_60_20_20_A5_5w1s_alpha_temporal_seed42
++data:
++  metadata: data/wlasl_60_20_20/metadata.csv
++  cache_dir: data/processed_wlasl_farneback
++model:
++  dimension: 128
++  variant: A5
++  normalization: group
++  regions: [0, 1, 2]
++  temporal_encoder: dilated_conv
++head:
++  matcher: relation
++  lambda_part: 1.0
++  beta_d: 1.0
++  beta_q: 0.5
++  tau_alpha: 1.0
++  rho: 0.8
++  tau_s: 0.2
++  detach_alpha: false
++training:
++  n_way: 5
++  k_shot: 1
++  queries_per_class: 5
++  episodes_per_epoch: 1000
++  max_epochs: 100
++  lr: 0.001
++  weight_decay: 0.0001
++  grad_clip: 1.0
++  amp: true
++  log_every: 100
++evaluation:
++  val_episodes_file: data/wlasl_60_20_20/episodes/val_5w1s_seed123.json
++  val_episodes: 100
++  seed: 42
+
+diff --git a/mfpa_fslr/configs/train_wlasl_5w5s_temporal.yaml b/mfpa_fslr/configs/train_wlasl_5w5s_temporal.yaml
+new file mode 100644
+--- /dev/null
++++ b/mfpa_fslr/configs/train_wlasl_5w5s_temporal.yaml
+@@ -0,0 +1,36 @@
++# Same protocol as the framewise run; temporal encoder is the only architecture change.
++seed: 42
++output_dir: outputs/WLASL_60_20_20_A5_5w5s_alpha_temporal_seed42
++data:
++  metadata: data/wlasl_60_20_20/metadata.csv
++  cache_dir: data/processed_wlasl_farneback
++model:
++  dimension: 128
++  variant: A5
++  normalization: group
++  regions: [0, 1, 2]
++  temporal_encoder: dilated_conv
++head:
++  matcher: euclidean
++  lambda_part: 1.0
++  beta_d: 1.0
++  beta_q: 0.5
++  tau_alpha: 1.0
++  rho: 0.8
++  tau_s: 0.2
++  detach_alpha: false
++training:
++  n_way: 5
++  k_shot: 5
++  queries_per_class: 5
++  episodes_per_epoch: 1000
++  max_epochs: 100
++  lr: 0.0001
++  weight_decay: 0.0001
++  grad_clip: 1.0
++  amp: true
++  log_every: 100
++evaluation:
++  val_episodes_file: data/wlasl_60_20_20/episodes/val_5w5s_seed123.json
++  val_episodes: 100
++  seed: 42
+
+diff --git a/mfpa_fslr/MODEL_IMPROVEMENT.md b/mfpa_fslr/MODEL_IMPROVEMENT.md
+new file mode 100644
+--- /dev/null
++++ b/mfpa_fslr/MODEL_IMPROVEMENT.md
+@@ -0,0 +1,15 @@
++# Temporal encoder model experiment
++
++This change adds an optional, lightweight dilated temporal convolution to MFPA-FSLR. The existing model encodes each flow/landmark transition independently and then applies attention pooling; this can weight transitions but has limited ability to represent the order and local evolution of a gesture. The new encoder processes each region's sequence before temporal attention pooling.
++
++- Two residual depthwise temporal convolution blocks with dilations 1 and 2.
++- Shared across left hand, right hand, and mouth to limit additional parameters.
++- Preserves sequence length and explicitly masks missing/padded transitions.
++- No pretrained weights or additional preprocessing required.
++- `model.temporal_encoder: none` restores the prior framewise model; `dilated_conv` enables the new path.
++
++## Fair comparison
++
++The original configs remain unchanged and use the framewise path. New `*_temporal.yaml` configs enable the temporal encoder and use separate output directories. Compare the original and temporal configurations for the same shot setting using the same training seed and fixed validation/test episode files. Do not overwrite prior checkpoints or use test accuracy to select the model.
++
++This is a hypothesis-driven architecture change, not a measured accuracy claim. Validate with multiple training seeds and fixed episodes. The unit tests check shapes, masking, gradients, and order sensitivity; they do not establish a recognition-accuracy gain.
+

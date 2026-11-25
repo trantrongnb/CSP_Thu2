@@ -66,17 +66,17 @@ def part_proto_logits(sg, sp, sq, qg, qp, qq, lam=1.0, beta_d=1.0,
     alpha = ((1 - rho) * uniform + rho * masked_softmax(scores, eligible)) if adaptive else uniform
     if detach_alpha:
         alpha = alpha.detach()
+    dg = ((qg[:, None] - pg[None, :]) ** 2).sum(-1)
+    dp = ((qp[:, None] - pp[None, :]) ** 2).sum(-1)
     valid = eligible[None, :] & (qq > eps)[:, None, :]
     weight = alpha[None, :] * valid
     weight = weight / weight.sum(-1, keepdim=True).clamp_min(eps)
     if matcher == "euclidean":
-        global_score = -((qg[:, None] - pg[None, :]) ** 2).sum(-1)
-        part_score = -((qp[:, None] - pp[None, :]) ** 2).sum(-1)
+        global_score, part_score = -dg, -dp
     else:
         global_score = _relation_matrix(qg, pg, relation_network)
-        query_count = qp.shape[0]
         query_pairs = qp[:, None, :, :].expand(-1, pp.shape[0], -1, -1)
-        prototype_pairs = pp[None, :, :, :].expand(query_count, -1, -1, -1)
+        prototype_pairs = pp[None, :, :, :].expand(qp.shape[0], -1, -1, -1)
         part_score = relation_network(query_pairs, prototype_pairs)
     logits = (global_score + lam * (weight * part_score).sum(-1)) / tau_s
     return logits, alpha
